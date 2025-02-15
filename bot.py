@@ -12,6 +12,7 @@ API_KEY = "AJGGWESPKP9GSWKHQDP4UNZP7SM67FSWWR"
 UPDATE_INTERVAL = 120  # 2 minutes in seconds
 CORTENSOR_API = "https://dashboard-devnet3.cortensor.network"
 
+# Dictionary: key = address format (abbreviated), value = full address
 ADDRESSES = {
     "0x93...F2E": "0x9344ed8328CF501F7A8d87231a2cB4EBd1207F2E",
     "0xb0...85b": "0xb0aBf49fDD7953A9394428aCE5dEA6fA93b8e85b",
@@ -38,7 +39,7 @@ def format_time(time: datetime) -> str:
     return time.strftime('%Y-%m-%d %H:%M:%S WIB')
 
 def get_age(timestamp: int) -> str:
-    """Return relative time (in secs/mins/hours/days) from a timestamp in English."""
+    """Return relative time (in secs/mins/hours/days) from a timestamp."""
     diff = datetime.now(WIB) - datetime.fromtimestamp(timestamp, WIB)
     seconds = int(diff.total_seconds())
     if seconds < 60:
@@ -52,12 +53,12 @@ def get_age(timestamp: int) -> str:
     days = hours // 24
     return f"{days} days ago"
 
-def fetch_balance(address: str) -> float:
+def fetch_balance(addr_key: str) -> float:
     try:
         params = {
             "module": "account",
             "action": "balance",
-            "address": ADDRESSES[address],
+            "address": ADDRESSES[addr_key],
             "tag": "latest",
             "apikey": API_KEY
         }
@@ -67,12 +68,13 @@ def fetch_balance(address: str) -> float:
         logger.error(f"Balance error: {str(e)}")
         return 0.0
 
-def fetch_recent_tx(address: str) -> dict:
+def fetch_recent_tx(addr_key: str) -> dict:
+    """Fetch the most recent transaction for a given address."""
     try:
         params = {
             "module": "account",
             "action": "txlist",
-            "address": ADDRESSES[address],
+            "address": ADDRESSES[addr_key],
             "sort": "desc",
             "offset": 1,
             "apikey": API_KEY
@@ -84,10 +86,31 @@ def fetch_recent_tx(address: str) -> dict:
         logger.error(f"TX error: {str(e)}")
         return {}
 
-def fetch_node_stats(address: str) -> dict:
+def fetch_transactions(addr_key: str) -> list:
+    """Fetch up to 100 recent transactions for the given address."""
+    try:
+        params = {
+            "module": "account",
+            "action": "txlist",
+            "address": ADDRESSES[addr_key],
+            "sort": "desc",
+            "page": 1,
+            "offset": 100,
+            "apikey": API_KEY
+        }
+        response = requests.get(BASE_URL, params=params, timeout=10)
+        results = response.json().get('result', [])
+        if isinstance(results, list):
+            return results
+        return []
+    except Exception as e:
+        logger.error(f"Transactions error: {str(e)}")
+        return []
+
+def fetch_node_stats(addr: str) -> dict:
     """Fetch node statistics from Cortensor API."""
     try:
-        url = f"{CORTENSOR_API}/nodestats/{address}"
+        url = f"{CORTENSOR_API}/nodestats/{addr}"
         response = requests.get(url, timeout=15)
         response.raise_for_status()
         return response.json()
@@ -112,7 +135,6 @@ def format_node_stats(stats: dict) -> str:
         ("Ping Metrics", stats.get("PingMetrics")),
         ("Global Ping Metrics", stats.get("GlobalPingMetrics")),
     ]
-
     table = "```\n"
     table += "| METRIC TYPE         | POINT | COUNTER | SUCCESS RATE |\n"
     table += "|---------------------|-------|---------|--------------|\n"
@@ -129,7 +151,7 @@ def start(update, context: CallbackContext):
         "Arbitrum Account Monitor\n\n"
         "Commands:\n"
         "/start - Show this message\n"
-        "/ping - Last 2 transactions\n"
+        "/ping - Check status and ping info\n"
         "/auto - Enable auto updates\n"
         "/nodestats <address> - Node statistics\n"
         "/help - Command help"
@@ -138,47 +160,65 @@ def start(update, context: CallbackContext):
 def help_command(update, context: CallbackContext):
     update.message.reply_text(
         "Command Help:\n"
-        "/ping - Last 2 transactions\n"
-        "/auto - Auto updates every 2 mins\n"
+        "/ping - For each address, shows:\n"
+        "  • Address (with a hyperlink to Arbiscan)\n"
+        "  • Status (Online/Offline from last 5 mins)\n"
+        "  • Balance\n"
+        "  • Ping (last 1 hour, grouped per 5 transactions: 🟢 if all succeed, 🔴 if any fails)\n"
+        "/auto - Auto updates every 2 mins (includes Arbiscan links)\n"
         "/nodestats <address> - Node performance stats\n"
         "/help - Show this message"
     )
 
 def ping(update, context: CallbackContext):
-    transactions = []
-    for address in ADDRESSES:
-        tx = fetch_recent_tx(address)
-        if tx:
-            method = tx.get('functionName', 'Transfer')[:12]
-            time_str = get_age(int(tx['timeStamp']))
-            status = "🟢 Online" if tx.get('isError', '1') == '0' else "🔴 Offline"
+    current_time = datetime.now(WIB)
+    threshold_status = current_time - timedelta(minutes=5)   # 5 minutes for status
+    threshold_ping = current_time - timedelta(hours=1)         # 1 hour for ping
+    messages = []
+    for addr_key, full_addr in ADDRESSES.items():
+        tx_list = fetch_transactions(addr_key)
+        # Filter transaksi untuk status (5 menit terakhir)
+        recent_status_txs = [tx for tx in tx_list if datetime.fromtimestamp(int(tx['timeStamp']), WIB) >= threshold_status]
+        if recent_status_txs:
+            most_recent_tx = recent_status_txs[0]
+            status = "Online" if most_recent_tx.get('isError', '1') == '0' else "Offline"
         else:
-            method = 'N/A'
-            time_str = 'N/A'
-            status = 'N/A'
-        transactions.append((address, method, time_str, status))
-    
-    response = (
-        "```\n"
-        "Cortensor Monitor BOT\n"
-        f"Updated: {format_time(get_wib_time())}\n\n"
-        "| Address    | Method       | Time           | Status       |\n"
-        "|------------|--------------|----------------|--------------|\n"
-        + "\n".join([f"| {a:<10} | {m:<12} | {t:<14} | {s:<12} |" for a, m, t, s in transactions])
-        + "\n```"
-    )
-    update.message.reply_text(response, parse_mode="Markdown")
+            status = "N/A"
+        # Filter transaksi untuk ping (1 jam terakhir)
+        recent_ping_txs = [tx for tx in tx_list if datetime.fromtimestamp(int(tx['timeStamp']), WIB) >= threshold_ping]
+        ping_symbols = []
+        # Bagi transaksi per 5
+        for i in range(0, len(recent_ping_txs), 5):
+            chunk = recent_ping_txs[i:i+5]
+            if not chunk:
+                continue
+            # Jika semua transaksi sukses, gunakan 🟢; jika ada yang gagal, 🔴
+            if all(tx.get('isError', '1') == '0' for tx in chunk):
+                ping_symbols.append("🟢")
+            else:
+                ping_symbols.append("🔴")
+        ping_str = " ".join(ping_symbols) if ping_symbols else "No transactions in last 1 hour"
+        balance = fetch_balance(addr_key)
+        arbiscan_url = f"https://sepolia.arbiscan.io/address/{full_addr}"
+        msg = (
+            f"Address: {addr_key} ([Check on Arbiscan]({arbiscan_url}))\n"
+            f"Status (last 5 mins): {status}\n"
+            f"Balance: {balance:.4f} ETH\n"
+            f"Ping (last 1 hour, per 5 tx): {ping_str}\n"
+        )
+        messages.append(msg)
+    final_message = "\n".join(messages)
+    update.message.reply_text(final_message, parse_mode="Markdown")
 
 def nodestats(update, context: CallbackContext):
     if not context.args:
         update.message.reply_text("Usage: /nodestats <node_address>")
         return
-    
-    address = context.args[0]
-    stats = fetch_node_stats(address)
+    addr = context.args[0]
+    stats = fetch_node_stats(addr)
     response = (
         f"📊 NODE STATISTICS\n"
-        f"Address: {address}\n"
+        f"Address: {addr}\n"
         f"Updated: {format_time(get_wib_time())}\n\n"
         f"{format_node_stats(stats)}"
     )
@@ -188,22 +228,20 @@ def auto_update(context: CallbackContext):
     chat_id = context.job.context
     report = []
     update_time = get_wib_time()
-    
-    for address in ADDRESSES:
-        balance = fetch_balance(address)
-        tx = fetch_recent_tx(address)
+    for addr_key, full_addr in ADDRESSES.items():
+        balance = fetch_balance(addr_key)
+        tx = fetch_recent_tx(addr_key)
         method = tx.get('functionName', 'Transfer')[:12] if tx else 'N/A'
         time_str = get_age(int(tx['timeStamp'])) if tx else 'N/A'
         status = "🟢 Online" if (tx and tx.get('isError', '1') == '0') else ("🔴 Offline" if tx else "N/A")
         row = {
-            'address': address,
+            'address': addr_key,
             'balance': f"{balance:.4f} ETH",
             'method': method,
             'time': time_str,
             'status': status
         }
         report.append(row)
-    
     header = "🔄 Cortensor Monitor BOT\n"
     body = (
         "```\n"
@@ -216,24 +254,24 @@ def auto_update(context: CallbackContext):
         + "\n```"
     )
     footer = f"\nLast update: {format_time(update_time)}"
-    context.bot.send_message(chat_id=chat_id, text=header + body + footer, parse_mode="Markdown")
+    # Tambahkan hyperlink untuk cek manual per alamat
+    links = "\n".join([f"{addr_key}: [Arbiscan](https://sepolia.arbiscan.io/address/{full_addr})" for addr_key, full_addr in ADDRESSES.items()])
+    message = header + body + footer + "\n\n" + links
+    context.bot.send_message(chat_id=chat_id, text=message, parse_mode="Markdown")
 
 def enable_auto(update, context: CallbackContext):
     chat_id = update.message.chat_id
     context.job_queue.run_repeating(auto_update, interval=UPDATE_INTERVAL, first=10, context=chat_id)
     update.message.reply_text("✅ Automatic updates activated (2 minute interval)")
 
-# ==================== MAIN ====================
 def main():
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
-
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("help", help_command))
     dp.add_handler(CommandHandler("ping", ping))
     dp.add_handler(CommandHandler("auto", enable_auto))
     dp.add_handler(CommandHandler("nodestats", nodestats))
-
     updater.start_polling()
     updater.idle()
 
