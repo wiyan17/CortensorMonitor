@@ -67,23 +67,6 @@ def fetch_balance(addr_key: str) -> float:
         logger.error(f"Balance error: {str(e)}")
         return 0.0
 
-def fetch_recent_tx(addr_key: str) -> dict:
-    try:
-        params = {
-            "module": "account",
-            "action": "txlist",
-            "address": ADDRESSES[addr_key],
-            "sort": "desc",
-            "offset": 1,
-            "apikey": API_KEY
-        }
-        response = requests.get(BASE_URL, params=params, timeout=10)
-        results = response.json().get('result', [])
-        return results[0] if results else {}
-    except Exception as e:
-        logger.error(f"TX error: {str(e)}")
-        return {}
-
 def fetch_transactions(addr_key: str) -> list:
     try:
         params = {
@@ -102,6 +85,23 @@ def fetch_transactions(addr_key: str) -> list:
         logger.error(f"Transactions error: {str(e)}")
         return []
 
+def fetch_recent_tx(addr_key: str) -> dict:
+    try:
+        params = {
+            "module": "account",
+            "action": "txlist",
+            "address": ADDRESSES[addr_key],
+            "sort": "desc",
+            "offset": 1,
+            "apikey": API_KEY
+        }
+        response = requests.get(BASE_URL, params=params, timeout=10)
+        results = response.json().get('result', [])
+        return results[0] if results else {}
+    except Exception as e:
+        logger.error(f"TX error: {str(e)}")
+        return {}
+
 def fetch_node_stats(addr: str) -> dict:
     try:
         url = f"{CORTENSOR_API}/nodestats/{addr}"
@@ -115,7 +115,6 @@ def fetch_node_stats(addr: str) -> dict:
 def format_node_stats(stats: dict) -> str:
     if not stats:
         return "❌ Failed to fetch node statistics"
-    
     metrics = [
         ("Request Metrics", stats.get("RequestMetrics")),
         ("Create Metrics", stats.get("CreateMetrics")),
@@ -128,15 +127,16 @@ def format_node_stats(stats: dict) -> str:
         ("Ping Metrics", stats.get("PingMetrics")),
         ("Global Ping Metrics", stats.get("GlobalPingMetrics")),
     ]
-    table = "```\n"
-    table += "| METRIC TYPE         | POINT | COUNTER | SUCCESS RATE |\n"
-    table += "|---------------------|-------|---------|--------------|\n"
+    lines = []
+    lines.append("┌─────────────────────────────┬─────────┬─────────┬──────────────┐")
+    lines.append("│         METRIC              │  POINT  │ COUNTER │ SUCCESS RATE │")
+    lines.append("├─────────────────────────────┼─────────┼─────────┼──────────────┤")
     for name, data in metrics:
         if not data:
             continue
-        table += f"| {name:<19} | {data.get('Point','N/A'):<5} | {data.get('Counter','N/A'):<7} | {data.get('SuccessRate','N/A'):<12} |\n"
-    table += "```"
-    return table
+        lines.append(f"│ {name:<27} │ {str(data.get('Point','N/A')):<7} │ {str(data.get('Counter','N/A')):<7} │ {str(data.get('SuccessRate','N/A')):<12} │")
+    lines.append("└─────────────────────────────┴─────────┴─────────┴──────────────┘")
+    return "\n".join(lines)
 
 # ==================== COMMAND HANDLERS ====================
 def start(update, context: CallbackContext):
@@ -144,7 +144,7 @@ def start(update, context: CallbackContext):
         "Arbitrum Account Monitor\n\n"
         "Commands:\n"
         "/start - Show this message\n"
-        "/ping - Check status and ping info (table format)\n"
+        "/ping - Check status and ping info (modern table)\n"
         "/auto - Enable auto updates\n"
         "/nodestats <address> - Node statistics\n"
         "/help - Command help"
@@ -153,12 +153,13 @@ def start(update, context: CallbackContext):
 def help_command(update, context: CallbackContext):
     update.message.reply_text(
         "Command Help:\n"
-        "/ping - For each address, displays a table with:\n"
-        "  • Address (with hyperlink to Arbiscan)\n"
-        "  • Status (Online/Offline from last 5 mins)\n"
-        "  • Balance\n"
-        "  • Ping (from last 1 hour, grouped per 5 transactions: 🟢 if all succeed, 🔴 if any fails)\n"
-        "/auto - Auto updates every 2 mins (includes Arbiscan links)\n"
+        "/ping - For each address, displays a modern table with:\n"
+        "  • Address\n"
+        "  • Status (last 5 mins)\n"
+        "  • Balance (ETH)\n"
+        "  • Ping (last 1 hour, grouped per 5 tx: 🟢 if all succeed, 🔴 if any fails)\n"
+        "Then lists hyperlinks to Arbiscan for manual check.\n\n"
+        "/auto - Auto updates every 2 mins (modern table + hyperlinks)\n"
         "/nodestats <address> - Node performance stats\n"
         "/help - Show this message"
     )
@@ -167,21 +168,29 @@ def ping(update, context: CallbackContext):
     current_time = datetime.now(WIB)
     threshold_status = current_time - timedelta(minutes=5)  # untuk Status
     threshold_ping = current_time - timedelta(hours=1)        # untuk Ping
-    table_lines = []
-    header = "| Address | Status (last 5 mins) | Balance (ETH) | Ping (last 1 hour, per 5 tx) |"
-    separator = "|---------|----------------------|---------------|----------------------------|"
-    table_lines.append(header)
-    table_lines.append(separator)
+
+    # Tentukan lebar kolom
+    col1_width = 12  # Address
+    col2_width = 14  # Status (5m)
+    col3_width = 14  # Balance (ETH)
+    col4_width = 28  # Ping (1h/5tx)
+
+    # Buat header tabel dengan karakter Unicode
+    top_line = "┌" + "─"*col1_width + "┬" + "─"*col2_width + "┬" + "─"*col3_width + "┬" + "─"*col4_width + "┐"
+    header_line = "│" + f" {'Address':^{col1_width}} " + "│" + f" {'Status(5m)':^{col2_width}} " + "│" + f" {'Balance(ETH)':^{col3_width}} " + "│" + f" {'Ping(1h/5tx)':^{col4_width}} " + "│"
+    mid_line = "├" + "─"*col1_width + "┼" + "─"*col2_width + "┼" + "─"*col3_width + "┼" + "─"*col4_width + "┤"
+
+    rows = []
     for addr_key, full_addr in ADDRESSES.items():
         tx_list = fetch_transactions(addr_key)
-        # Tentukan Status dari transaksi dalam 5 menit terakhir
+        # Status dari transaksi dalam 5 menit terakhir
         recent_status_txs = [tx for tx in tx_list if datetime.fromtimestamp(int(tx['timeStamp']), WIB) >= threshold_status]
         if recent_status_txs:
             most_recent_tx = recent_status_txs[0]
             status = "Online" if most_recent_tx.get('isError', '1') == '0' else "Offline"
         else:
             status = "N/A"
-        # Tentukan Ping dari transaksi dalam 1 jam terakhir, dikelompokkan per 5 transaksi
+        # Ping dari transaksi dalam 1 jam terakhir, dikelompokkan tiap 5 transaksi
         recent_ping_txs = [tx for tx in tx_list if datetime.fromtimestamp(int(tx['timeStamp']), WIB) >= threshold_ping]
         ping_symbols = []
         for i in range(0, len(recent_ping_txs), 5):
@@ -192,12 +201,18 @@ def ping(update, context: CallbackContext):
                 ping_symbols.append("🟢")
             else:
                 ping_symbols.append("🔴")
-        ping_str = " ".join(ping_symbols) if ping_symbols else "No tx in last 1 hour"
+        ping_str = " ".join(ping_symbols) if ping_symbols else "No tx in 1h"
         balance = fetch_balance(addr_key)
-        address_link = f"[{addr_key}](https://sepolia.arbiscan.io/address/{full_addr})"
-        row = f"| {address_link} | {status} | {balance:.4f} | {ping_str} |"
-        table_lines.append(row)
-    final_message = "```\n" + "\n".join(table_lines) + "\n```"
+        row = "│" + f" {addr_key:^{col1_width}} " + "│" + f" {status:^{col2_width}} " + "│" + f" {balance:^{col3_width}.4f} " + "│" + f" {ping_str:^{col4_width}} " + "│"
+        rows.append(row)
+    bottom_line = "└" + "─"*col1_width + "┴" + "─"*col2_width + "┴" + "─"*col3_width + "┴" + "─"*col4_width + "┘"
+    table = "\n".join([top_line, header_line, mid_line] + rows + [bottom_line])
+    
+    # Blok hyperlink (tidak di dalam tabel)
+    links = "Hyperlinks for manual check:\n" + "\n".join(
+        [f"{addr_key}: [Arbiscan](https://sepolia.arbiscan.io/address/{full_addr})" for addr_key, full_addr in ADDRESSES.items()]
+    )
+    final_message = table + "\n\n" + links
     update.message.reply_text(final_message, parse_mode="Markdown")
 
 def nodestats(update, context: CallbackContext):
@@ -216,25 +231,43 @@ def nodestats(update, context: CallbackContext):
 
 def auto_update(context: CallbackContext):
     chat_id = context.job.context
-    table_lines = []
-    header = "| Address | Balance (ETH) | Method       | Time           | Status |"
-    separator = "|---------|---------------|--------------|----------------|--------|"
-    table_lines.append(header)
-    table_lines.append(separator)
+    current_time = datetime.now(WIB)
+    # Tabel untuk auto_update dengan kolom: Address, Balance, Method, Time, Status
+    col1_width = 12  # Address
+    col2_width = 14  # Balance (ETH)
+    col3_width = 12  # Method
+    col4_width = 16  # Time
+    col5_width = 10  # Status
+
+    top_line = "┌" + "─"*col1_width + "┬" + "─"*col2_width + "┬" + "─"*col3_width + "┬" + "─"*col4_width + "┬" + "─"*col5_width + "┐"
+    header_line = ("│" + f" {'Address':^{col1_width}} " +
+                   "│" + f" {'Balance':^{col2_width}} " +
+                   "│" + f" {'Method':^{col3_width}} " +
+                   "│" + f" {'Time':^{col4_width}} " +
+                   "│" + f" {'Status':^{col5_width}} " + "│")
+    mid_line = "├" + "─"*col1_width + "┼" + "─"*col2_width + "┼" + "─"*col3_width + "┼" + "─"*col4_width + "┼" + "─"*col5_width + "┤"
+    rows = []
     for addr_key, full_addr in ADDRESSES.items():
         balance = fetch_balance(addr_key)
         tx = fetch_recent_tx(addr_key)
         method = tx.get('functionName', 'Transfer')[:12] if tx else 'N/A'
         time_str = get_age(int(tx['timeStamp'])) if tx else 'N/A'
         status = "🟢 Online" if (tx and tx.get('isError', '1') == '0') else ("🔴 Offline" if tx else "N/A")
-        address_link = f"[{addr_key}](https://sepolia.arbiscan.io/address/{full_addr})"
-        row = f"| {address_link} | {balance:.4f} | {method:<12} | {time_str:<14} | {status} |"
-        table_lines.append(row)
-    final_message = "```\n" + "\n".join(table_lines) + "\n```"
-    # Daftar hyperlink untuk pengecekan manual
-    links = "\n".join([f"{addr_key}: [Arbiscan](https://sepolia.arbiscan.io/address/{full_addr})" for addr_key, full_addr in ADDRESSES.items()])
-    message = "🔄 Cortensor Monitor BOT\n" + final_message + "\n\n" + links
-    context.bot.send_message(chat_id=chat_id, text=message, parse_mode="Markdown")
+        row = ("│" + f" {addr_key:^{col1_width}} " +
+               "│" + f" {balance:^{col2_width}.4f} " +
+               "│" + f" {method:^{col3_width}} " +
+               "│" + f" {time_str:^{col4_width}} " +
+               "│" + f" {status:^{col5_width}} " + "│")
+        rows.append(row)
+    bottom_line = "└" + "─"*col1_width + "┴" + "─"*col2_width + "┴" + "─"*col3_width + "┴" + "─"*col4_width + "┴" + "─"*col5_width + "┘"
+    table = "\n".join([top_line, header_line, mid_line] + rows + [bottom_line])
+    
+    # Blok hyperlink
+    links = "Hyperlinks for manual check:\n" + "\n".join(
+        [f"{addr_key}: [Arbiscan](https://sepolia.arbiscan.io/address/{full_addr})" for addr_key, full_addr in ADDRESSES.items()]
+    )
+    final_message = "🔄 Cortensor Monitor BOT\n" + table + "\n\n" + links
+    context.bot.send_message(chat_id=chat_id, text=final_message, parse_mode="Markdown")
 
 def enable_auto(update, context: CallbackContext):
     chat_id = update.message.chat_id
