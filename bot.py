@@ -220,14 +220,19 @@ async def auto_update(context: CallbackContext):
     footer = f"\nLast update: {format_time(update_time)}"
     
     await context.bot.send_message(
-        chat_id=context.job.chat_id,
+        chat_id=context.job.data,
         text=header + body + footer,
         parse_mode="Markdown"
     )
 
 async def enable_auto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    context.job_queue.run_repeating(auto_update, interval=UPDATE_INTERVAL, first=10, chat_id=chat_id)
+    context.application.job_queue.run_repeating(
+        auto_update,
+        interval=UPDATE_INTERVAL,
+        first=10,
+        context=chat_id
+    )
     await update.message.reply_text("✅ Automatic updates activated (2 minute interval)")
 
 # ==================== MAIN ====================
