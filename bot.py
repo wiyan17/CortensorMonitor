@@ -5,7 +5,7 @@ import logging
 import requests
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from telegram.ext import Updater, CommandHandler, CallbackContext
 from dotenv import load_dotenv
 
@@ -27,8 +27,6 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-# Timezone WIB (UTC+7)
-WIB = timezone(timedelta(hours=7))
 
 # ==================== DATA STORAGE FUNCTIONS ====================
 
@@ -53,7 +51,7 @@ def save_data(data: dict):
 def get_addresses_for_chat(chat_id: int) -> list:
     """Get addresses for a specific chat."""
     data = load_data()
-    return data.get(str(chat_id), [])
+    return data.get(str(chat_id), []
 
 def update_addresses_for_chat(chat_id: int, addresses: list):
     """Update addresses for a specific chat."""
@@ -67,14 +65,12 @@ def shorten_address(address: str) -> str:
     """Shorten Ethereum address."""
     return address[:6] + "..." + address[-4:] if len(address) > 10 else address
 
-def get_wib_time() -> datetime:
-    return datetime.now(WIB)
-
 def format_time(time: datetime) -> str:
-    return time.strftime('%Y-%m-%d %H:%M:%S WIB')
+    """Format time to user's local time."""
+    return time.strftime('%Y-%m-%d %H:%M:%S')
 
 def get_age(timestamp: int) -> str:
-    diff = datetime.now(WIB) - datetime.fromtimestamp(timestamp, WIB)
+    diff = datetime.now() - datetime.fromtimestamp(timestamp)
     seconds = int(diff.total_seconds())
     if seconds < 60:
         return f"{seconds} secs ago"
@@ -228,7 +224,7 @@ def ping(update, context):
     
     update.message.reply_text(
         "📊 *Node Status*\n\n" + "\n\n".join(responses) + 
-        f"\n\n⏰ *Last update:* {format_time(get_wib_time())}",
+        f"\n\n⏰ *Last update:* {format_time(datetime.now())}",
         parse_mode="Markdown",
         disable_web_page_preview=True
     )
@@ -253,7 +249,7 @@ def nodestats(update, context):
         f"• Last activity: `{get_age(stats.get('last_tx', 0))}`\n\n"
         f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{address}) | "
         f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{address})\n\n"
-        f"⏰ *Last update:* {format_time(get_wib_time())}",
+        f"⏰ *Last update:* {format_time(datetime.now())}",
         parse_mode="Markdown",
         disable_web_page_preview=True
     )
@@ -262,7 +258,12 @@ def auto_update(context: CallbackContext):
     """Job for auto-updates."""
     job = context.job
     chat_id = job.context['chat_id']
-    addresses = job.context['addresses']
+    
+    # Always load the latest addresses from data.json
+    addresses = get_addresses_for_chat(chat_id)
+    
+    if not addresses:
+        return  # Skip if no addresses are found
     
     responses = []
     for addr in addresses[:5]:  # Limit to 5 addresses
@@ -282,7 +283,7 @@ def auto_update(context: CallbackContext):
     context.bot.send_message(
         chat_id=chat_id,
         text="🔄 *Auto Update*\n\n" + "\n\n".join(responses) + 
-        f"\n\n⏰ *Last update:* {format_time(get_wib_time())}",
+        f"\n\n⏰ *Last update:* {format_time(datetime.now())}",
         parse_mode="Markdown",
         disable_web_page_preview=True
     )
@@ -290,17 +291,16 @@ def auto_update(context: CallbackContext):
 def enable_auto(update, context):
     """Handler for /auto command."""
     chat_id = update.message.chat_id
-    addresses = context.args or get_addresses_for_chat(chat_id)
-    
-    if not addresses:
-        update.message.reply_text("ℹ️ No addresses found! Add one with `/add`.")
-        return
     
     # Schedule auto-update job
-    context.job_queue.run_repeating(
+    if 'job' in context.chat_data:
+        update.message.reply_text("⚠️ Auto-updates are already enabled!")
+        return
+    
+    context.chat_data['job'] = context.job_queue.run_repeating(
         auto_update,
         interval=UPDATE_INTERVAL,
-        context={'chat_id': chat_id, 'addresses': addresses[:5]},  # Max 5 addresses
+        context={'chat_id': chat_id},
     )
     
     update.message.reply_text(
@@ -313,12 +313,14 @@ def alert_check(context: CallbackContext):
     """Check for inactivity and send alerts."""
     job = context.job
     chat_id = job.context['chat_id']
-    addresses = job.context['addresses']
+    
+    # Always load the latest addresses from data.json
+    addresses = get_addresses_for_chat(chat_id)
     
     for addr in addresses[:5]:  # Limit to 5 addresses
         txs = fetch_transactions(addr)
         last_tx_time = int(txs[0]['timeStamp']) if txs else 0
-        time_since_last_tx = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
+        time_since_last_tx = datetime.now() - datetime.fromtimestamp(last_tx_time)
         
         if time_since_last_tx > timedelta(minutes=15):
             context.bot.send_message(
@@ -335,17 +337,16 @@ def alert_check(context: CallbackContext):
 def enable_alert(update, context):
     """Handler for /alert command."""
     chat_id = update.message.chat_id
-    addresses = context.args or get_addresses_for_chat(chat_id)
-    
-    if not addresses:
-        update.message.reply_text("ℹ️ No addresses found! Add one with `/add`.")
-        return
     
     # Schedule alert job
-    context.job_queue.run_repeating(
+    if 'alert_job' in context.chat_data:
+        update.message.reply_text("⚠️ Alerts are already enabled!")
+        return
+    
+    context.chat_data['alert_job'] = context.job_queue.run_repeating(
         alert_check,
         interval=900,  # 15 minutes
-        context={'chat_id': chat_id, 'addresses': addresses[:5]},  # Max 5 addresses
+        context={'chat_id': chat_id},
     )
     
     update.message.reply_text(
