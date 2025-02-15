@@ -31,7 +31,6 @@ logger = logging.getLogger(__name__)
 WIB = timezone(timedelta(hours=7))
 
 # ==================== DATA STORAGE FUNCTIONS ====================
-
 def load_data() -> dict:
     """Load data from JSON file."""
     if os.path.exists(DATA_FILE):
@@ -62,7 +61,6 @@ def update_addresses_for_chat(chat_id: int, addresses: list):
     save_data(data)
 
 # ==================== UTILITY FUNCTIONS ====================
-
 def shorten_address(address: str) -> str:
     """Shorten Ethereum address."""
     return address[:6] + "..." + address[-4:] if len(address) > 10 else address
@@ -82,7 +80,6 @@ def get_age(timestamp: int) -> str:
     return f"{minutes} mins ago" if minutes < 60 else f"{minutes//60} hours ago"
 
 # ==================== API FUNCTIONS ====================
-
 def fetch_balance(address: str) -> float:
     """Fetch balance from Arbiscan API."""
     try:
@@ -128,7 +125,6 @@ def fetch_node_stats(address: str) -> dict:
         return {}
 
 # ==================== COMMAND HANDLERS ====================
-
 def start(update, context):
     """Handler for /start command."""
     update.message.reply_text(
@@ -137,6 +133,7 @@ def start(update, context):
         "✅ `/add <address>` - Add a wallet address\n"
         "❌ `/remove <address>` - Remove a wallet address\n"
         "📊 `/ping` - Check node status\n"
+        "🩺 `/health` - Check node health (last 1 hour transactions)\n"
         "🔄 `/auto` - Enable auto-updates every 2 mins\n"
         "🚫 `/stop` - Stop auto-updates and alerts\n"
         "📈 `/nodestats <address>` - View node stats\n"
@@ -153,10 +150,11 @@ def help_command(update, context):
         "1. Add an address: `/add 0x123...`\n"
         "2. Remove an address: `/remove 0x123...`\n"
         "3. Check status: `/ping`\n"
-        "4. Enable auto-updates: `/auto`\n"
-        "5. Stop auto-updates/alerts: `/stop`\n"
-        "6. Set alerts: `/alert`\n"
-        "7. Maximum 5 addresses per chat.\n\n"
+        "4. Check health: `/health`\n"
+        "5. Enable auto-updates: `/auto`\n"
+        "6. Stop auto-updates/alerts: `/stop`\n"
+        "7. Set alerts: `/alert`\n"
+        "8. Maximum 5 addresses per chat.\n\n"
         "Need more help? Just ask!",
         parse_mode="Markdown"
     )
@@ -167,21 +165,21 @@ def add(update, context):
     if not context.args:
         update.message.reply_text("Usage: `/add 0x123...`", parse_mode="Markdown")
         return
-    
+
     address = context.args[0].lower()
     if not address.startswith("0x") or len(address) != 42:
         update.message.reply_text("❌ Invalid address! It must start with `0x` and be 42 characters long.")
         return
-    
+
     addresses = get_addresses_for_chat(chat_id)
     if address in addresses:
         update.message.reply_text("⚠️ Address already added!")
         return
-    
+
     if len(addresses) >= 5:
         update.message.reply_text("❌ Maximum 5 addresses per chat!")
         return
-    
+
     addresses.append(address)
     update_addresses_for_chat(chat_id, addresses)
     update.message.reply_text(f"✅ Added `{shorten_address(address)}` to your list!", parse_mode="Markdown")
@@ -192,14 +190,14 @@ def remove(update, context):
     if not context.args:
         update.message.reply_text("Usage: `/remove 0x123...`", parse_mode="Markdown")
         return
-    
+
     address = context.args[0].lower()
     addresses = get_addresses_for_chat(chat_id)
-    
+
     if address not in addresses:
         update.message.reply_text("❌ Address not found in your list!")
         return
-    
+
     addresses.remove(address)
     update_addresses_for_chat(chat_id, addresses)
     update.message.reply_text(f"✅ Removed `{shorten_address(address)}` from your list!", parse_mode="Markdown")
@@ -208,28 +206,35 @@ def ping(update, context):
     """Handler for /ping command."""
     chat_id = update.message.chat_id
     addresses = context.args if context.args else get_addresses_for_chat(chat_id)
-    
+
     if not addresses:
         update.message.reply_text("ℹ️ No addresses found! Add one with `/add`.")
         return
-    
+
     responses = []
-    for addr in addresses[:5]:  # Limit to 5 addresses
+    for addr in addresses[:5]:
         balance = fetch_balance(addr)
-        txs = fetch_transactions(addr)[:6]  # Last 6 transactions
-        status = "🟢 Online" if any(tx['isError'] == '0' for tx in txs) else "🔴 Offline"
-        
+        txs = fetch_transactions(addr)[:6]
+        if txs:
+            last_tx_time = int(txs[0]['timeStamp'])
+            time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
+            status = "🟢 Online" if time_diff <= timedelta(minutes=5) else "🔴 Offline"
+            last_activity = get_age(last_tx_time)
+        else:
+            status = "🔴 Offline"
+            last_activity = "N/A"
+
         responses.append(
             f"🔹 *{shorten_address(addr)}*\n"
             f"💵 Balance: `{balance:.4f} ETH`\n"
             f"📊 Status: {status}\n"
-            f"⏳ Last activity: {get_age(int(txs[0]['timeStamp'])) if txs else 'N/A'}\n"
+            f"⏳ Last activity: {last_activity}\n"
             f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | "
             f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
         )
-    
+
     update.message.reply_text(
-        "📊 *Node Status*\n\n" + "\n\n".join(responses) + 
+        "📊 *Node Status*\n\n" + "\n\n".join(responses) +
         f"\n\n⏰ *Last update:* {format_time(get_wib_time())}",
         parse_mode="Markdown",
         disable_web_page_preview=True
@@ -240,14 +245,14 @@ def nodestats(update, context):
     if not context.args:
         update.message.reply_text("Usage: `/nodestats 0x123...`", parse_mode="Markdown")
         return
-    
+
     address = context.args[0]
     stats = fetch_node_stats(address)
-    
+
     if not stats:
         update.message.reply_text("❌ No data found for this address!")
         return
-    
+
     update.message.reply_text(
         f"📈 *Node Stats for {shorten_address(address)}*\n\n"
         f"• Uptime: `{stats.get('uptime', 'N/A')}`\n"
@@ -260,13 +265,63 @@ def nodestats(update, context):
         disable_web_page_preview=True
     )
 
-# ==================== AUTO UPDATE & ALERT JOBS ====================
+def health(update, context):
+    """Handler for /health command to check node health based on the last 1 hour of transactions."""
+    chat_id = update.message.chat_id
+    addresses = context.args if context.args else get_addresses_for_chat(chat_id)
+    now = datetime.now(WIB)
+    one_hour_ago = now - timedelta(hours=1)
 
+    if not addresses:
+        update.message.reply_text("ℹ️ No addresses found! Add one with `/add`.")
+        return
+
+    responses = []
+    for addr in addresses[:5]:
+        balance = fetch_balance(addr)
+        txs = fetch_transactions(addr)
+        # Filter transactions from the last 1 hour
+        recent_txs = [tx for tx in txs if datetime.fromtimestamp(int(tx['timeStamp']), WIB) >= one_hour_ago]
+        if recent_txs:
+            last_tx_time = int(recent_txs[0]['timeStamp'])
+            last_activity = get_age(last_tx_time)
+            # Group transactions into chunks of 6
+            groups = [recent_txs[i:i+6] for i in range(0, len(recent_txs), 6)]
+            group_statuses = []
+            for group in groups:
+                # Mark group green (🟩) if all transactions are successful (isError == "0"),
+                # otherwise mark red (🟥)
+                if any(tx.get('isError') != '0' for tx in group):
+                    group_statuses.append("🟥")
+                else:
+                    group_statuses.append("🟩")
+            health_status = " ".join(group_statuses)
+        else:
+            last_activity = "N/A"
+            health_status = "No transactions in the last hour"
+
+        responses.append(
+            f"🔹 *{shorten_address(addr)}*\n"
+            f"💵 Balance: `{balance:.4f} ETH`\n"
+            f"⏳ Last activity: {last_activity}\n"
+            f"🩺 Health: {health_status}\n"
+            f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | "
+            f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
+        )
+
+    update.message.reply_text(
+        "🩺 *Node Health*\n\n" + "\n\n".join(responses) +
+        f"\n\n⏰ *Last update:* {format_time(get_wib_time())}",
+        parse_mode="Markdown",
+        disable_web_page_preview=True
+    )
+
+# ==================== AUTO UPDATE & ALERT JOBS ====================
 def auto_update(context: CallbackContext):
     """Job for auto-update; always fetches the latest data from storage."""
     job = context.job
     chat_id = job.context['chat_id']
-    addresses = get_addresses_for_chat(chat_id)[:5]  # Limit to 5 addresses
+    addresses = get_addresses_for_chat(chat_id)[:5]
     if not addresses:
         context.bot.send_message(
             chat_id=chat_id,
@@ -274,13 +329,20 @@ def auto_update(context: CallbackContext):
             parse_mode="Markdown"
         )
         return
-    
+
     responses = []
     for addr in addresses:
         balance = fetch_balance(addr)
-        txs = fetch_transactions(addr)[:6]  # Last 6 transactions
-        status = "🟢 Online" if any(tx['isError'] == '0' for tx in txs) else "🔴 Offline"
-        last_activity = get_age(int(txs[0]['timeStamp'])) if txs else 'N/A'
+        txs = fetch_transactions(addr)[:6]
+        if txs:
+            last_tx_time = int(txs[0]['timeStamp'])
+            time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
+            status = "🟢 Online" if time_diff <= timedelta(minutes=5) else "🔴 Offline"
+            last_activity = get_age(last_tx_time)
+        else:
+            status = "🔴 Offline"
+            last_activity = "N/A"
+
         responses.append(
             f"🔹 *{shorten_address(addr)}*\n"
             f"💵 Balance: `{balance:.4f} ETH`\n"
@@ -289,39 +351,13 @@ def auto_update(context: CallbackContext):
             f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | "
             f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
         )
-    
+
     context.bot.send_message(
         chat_id=chat_id,
-        text="🔄 *Auto Update*\n\n" + "\n\n".join(responses) + 
+        text="🔄 *Auto Update*\n\n" + "\n\n".join(responses) +
              f"\n\n⏰ *Last update:* {format_time(get_wib_time())}",
         parse_mode="Markdown",
         disable_web_page_preview=True
-    )
-
-def enable_auto(update, context):
-    """Handler for /auto command."""
-    chat_id = update.message.chat_id
-    if not get_addresses_for_chat(chat_id):
-        update.message.reply_text("ℹ️ No addresses found! Add one with `/add`.")
-        return
-
-    # Check if an auto-update job is already running for this chat
-    current_jobs = context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}")
-    if current_jobs:
-        update.message.reply_text("ℹ️ Auto-update is already active!")
-        return
-
-    context.job_queue.run_repeating(
-        auto_update,
-        interval=UPDATE_INTERVAL,
-        context={'chat_id': chat_id},
-        name=f"auto_update_{chat_id}"
-    )
-    
-    update.message.reply_text(
-        "✅ *Auto-updates enabled!*\n\n"
-        "I will send updates every 2 minutes with the latest data.",
-        parse_mode="Markdown"
     )
 
 def alert_check(context: CallbackContext):
@@ -329,13 +365,13 @@ def alert_check(context: CallbackContext):
     job = context.job
     chat_id = job.context['chat_id']
     addresses = get_addresses_for_chat(chat_id)[:5]
-    
+
     for addr in addresses:
         txs = fetch_transactions(addr)
         if txs:
             last_tx_time = int(txs[0]['timeStamp'])
-            time_since_last_tx = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
-            if time_since_last_tx > timedelta(minutes=15):
+            time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
+            if time_diff > timedelta(minutes=15):
                 context.bot.send_message(
                     chat_id=chat_id,
                     text=f"🚨 *Inactivity Alert!*\n\n"
@@ -347,7 +383,6 @@ def alert_check(context: CallbackContext):
                     disable_web_page_preview=True
                 )
         else:
-            # If no transactions found at all, send alert immediately
             context.bot.send_message(
                 chat_id=chat_id,
                 text=f"🚨 *Inactivity Alert!*\n\n"
@@ -366,7 +401,6 @@ def enable_alert(update, context):
         update.message.reply_text("ℹ️ No addresses found! Add one with `/add`.")
         return
 
-    # Check if an alert job is already running for this chat
     current_jobs = context.job_queue.get_jobs_by_name(f"alert_{chat_id}")
     if current_jobs:
         update.message.reply_text("ℹ️ Alerts are already active!")
@@ -378,7 +412,7 @@ def enable_alert(update, context):
         context={'chat_id': chat_id},
         name=f"alert_{chat_id}"
     )
-    
+
     update.message.reply_text(
         "✅ *Alerts enabled!*\n\n"
         "I will notify you if there are no transactions in the last 15 minutes.",
@@ -400,12 +434,11 @@ def stop(update, context):
         update.message.reply_text("ℹ️ No active jobs found.")
 
 # ==================== MAIN FUNCTION ====================
-
 def main():
     """Run the bot."""
     updater = Updater(TOKEN)
     dp = updater.dispatcher
-    
+
     # Register handlers
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("help", help_command))
@@ -416,7 +449,8 @@ def main():
     dp.add_handler(CommandHandler("nodestats", nodestats))
     dp.add_handler(CommandHandler("alert", enable_alert))
     dp.add_handler(CommandHandler("stop", stop))
-    
+    dp.add_handler(CommandHandler("health", health))
+
     updater.start_polling()
     updater.idle()
 
