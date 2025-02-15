@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Arbitrum Account Monitor Pro
+# Cortensor Node Monitoring Bot
 
 import logging
 import requests
@@ -9,17 +9,17 @@ from datetime import datetime, timedelta, timezone
 from telegram.ext import Updater, CommandHandler, CallbackContext
 from dotenv import load_dotenv
 
-# Load environment variables dari file .env
+# Load environment variables from .env file
 load_dotenv()
 
 # ==================== CONFIGURATION ====================
 TOKEN = os.getenv("TOKEN")
 API_KEY = os.getenv("API_KEY")
-UPDATE_INTERVAL = 120  # 2 minutes in seconds
+UPDATE_INTERVAL = 120  # 2 minutes
 CORTENSOR_API = "https://dashboard-devnet3.cortensor.network"
 
-# File untuk menyimpan alamat yang ditambahkan oleh user
-ADDRESSES_FILE = "addresses.json"
+# File to persistently store addresses per chat
+DATA_FILE = "data.json"
 
 # ==================== INITIALIZATION ====================
 logging.basicConfig(
@@ -27,32 +27,44 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+# We use WIB (UTC+7) as our timezone
 WIB = timezone(timedelta(hours=7))
+
+# ==================== DATA STORAGE FUNCTIONS ====================
+
+def load_data() -> dict:
+    """Load persistent data from DATA_FILE and return as a dictionary."""
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading data: {e}")
+    return {}
+
+def save_data(data: dict):
+    """Save data to DATA_FILE."""
+    try:
+        with open(DATA_FILE, "w") as f:
+            json.dump(data, f)
+    except Exception as e:
+        logger.error(f"Error saving data: {e}")
+
+def get_addresses_for_chat(chat_id: int) -> list:
+    """Return the list of addresses for the given chat."""
+    data = load_data()
+    return data.get(str(chat_id), [])
+
+def update_addresses_for_chat(chat_id: int, addresses: list):
+    """Update the list of addresses for the given chat."""
+    data = load_data()
+    data[str(chat_id)] = addresses
+    save_data(data)
 
 # ==================== UTILITY FUNCTIONS ====================
 
-def load_addresses() -> list:
-    """Membaca alamat dari file penyimpanan."""
-    if os.path.exists(ADDRESSES_FILE):
-        try:
-            with open(ADDRESSES_FILE, "r") as f:
-                addresses = json.load(f)
-                if isinstance(addresses, list):
-                    return addresses
-        except Exception as e:
-            logger.error(f"Error loading addresses: {e}")
-    return []
-
-def save_addresses(addresses: list):
-    """Menyimpan alamat ke file penyimpanan."""
-    try:
-        with open(ADDRESSES_FILE, "w") as f:
-            json.dump(addresses, f)
-    except Exception as e:
-        logger.error(f"Error saving addresses: {e}")
-
 def shorten_address(address: str) -> str:
-    """Mengembalikan alamat dalam format singkat."""
+    """Return a shortened version of the address (e.g., 0x1234...abcd)."""
     if len(address) > 10:
         return address[:6] + "..." + address[-4:]
     return address
@@ -139,115 +151,118 @@ def fetch_node_stats(address: str) -> dict:
         logger.error(f"Node stats error for {address}: {str(e)}")
         return {}
 
-# ==================== HELPER FOR COMMANDS ====================
-
-def get_addresses_from_args(args: list) -> list:
-    """
-    Jika args disediakan, gunakan args (maks. 5 alamat);
-    jika tidak, gunakan alamat yang tersimpan.
-    """
-    if args:
-        if len(args) > 5:
-            return None
-        return args
-    else:
-        stored = load_addresses()
-        if not stored:
-            return None
-        return stored
-
 # ==================== COMMAND HANDLERS ====================
 
 def start(update, context: CallbackContext):
     text = (
-        "Selamat datang di *Arbitrum Account Monitor Bot*\n\n"
-        "Gunakan perintah berikut:\n"
-        "• `/add <address>` - Tambah alamat (maks. 5 alamat akan disimpan secara permanen)\n"
-        "• `/ping [address1 address2 ...]` - Cek status & ping untuk maksimal 5 alamat.\n"
-        "    - Jika tidak diberikan, maka akan menggunakan alamat yang tersimpan.\n"
-        "• `/auto [address1 address2 ...]` - Auto update setiap 2 menit dengan info yang sama seperti /ping.\n"
-        "• `/nodestats <address>` - Tampilkan statistik node untuk alamat tertentu.\n"
-        "• `/help` - Tampilkan pesan bantuan ini.\n\n"
-        "Pastikan alamat yang dimasukkan adalah alamat Ethereum yang valid (dimulai dengan `0x`)."
+        "Welcome to the *Cortensor Node Monitoring Bot*.\n\n"
+        "Available commands:\n"
+        "• `/add <address>` - Add a valid Ethereum address to your list (up to 5 addresses per chat).\n"
+        "• `/remove <address>` - Remove an address from your list.\n"
+        "• `/ping [address1 address2 ...]` - Retrieve status and ping information for up to 5 addresses.\n"
+        "   If no addresses are provided, the bot uses the addresses saved for this chat.\n"
+        "• `/auto [address1 address2 ...]` - Enable automatic updates every 2 minutes with the same info as `/ping`.\n"
+        "• `/nodestats <address>` - Display detailed node statistics for a given address.\n"
+        "• `/help` - Show usage instructions.\n\n"
+        "Please ensure that any address entered is a valid Ethereum address (starting with `0x`)."
     )
     update.message.reply_text(text, parse_mode="Markdown")
 
 def help_command(update, context: CallbackContext):
     text = (
-        "*Cara Penggunaan:*\n\n"
-        "1. Tambah alamat ke daftar dengan:\n"
+        "*Usage Instructions:*\n\n"
+        "1. Add an address using:\n"
         "   `/add 0x1234567890abcdef1234567890abcdef12345678`\n\n"
-        "2. Cek info alamat dengan:\n"
-        "   `/ping` (menggunakan daftar alamat yang tersimpan) atau\n"
-        "   `/ping 0x123... abcd...` (maks. 5 alamat, dipisahkan spasi)\n\n"
-        "3. Aktifkan auto update dengan:\n"
-        "   `/auto` atau `/auto <address1> <address2> ...`\n\n"
-        "4. Dapatkan statistik node dengan:\n"
+        "2. Remove an address using:\n"
+        "   `/remove 0x1234567890abcdef1234567890abcdef12345678`\n\n"
+        "3. Retrieve information with:\n"
+        "   `/ping` (to use your saved addresses) or\n"
+        "   `/ping 0x123... 0xabcd...` (up to 5 addresses, separated by spaces)\n\n"
+        "4. Enable auto-updates with:\n"
+        "   `/auto` or `/auto <address1> <address2> ...`\n\n"
+        "5. Display node statistics with:\n"
         "   `/nodestats 0x1234567890abcdef1234567890abcdef12345678`\n\n"
-        "5. Untuk keamanan, API key dan token disimpan di file *.env*.\n"
+        "Each chat stores its own list of addresses, ensuring data privacy per user.\n"
+        "For security, the API key and token are loaded from a *.env* file."
     )
     update.message.reply_text(text, parse_mode="Markdown")
 
 def add(update, context: CallbackContext):
+    chat_id = update.message.chat_id
     if not context.args:
         update.message.reply_text("Usage: `/add <address>`", parse_mode="Markdown")
         return
     address = context.args[0].strip()
     if not address.startswith("0x") or len(address) != 42:
-        update.message.reply_text("Alamat tidak valid. Pastikan alamat Ethereum (42 karakter, dimulai dengan 0x).")
+        update.message.reply_text("Invalid address. Please ensure it is a valid Ethereum address (42 characters, starting with 0x).")
         return
-    stored = load_addresses()
-    if address in stored:
-        update.message.reply_text("Alamat sudah ada dalam daftar.")
+    user_addresses = get_addresses_for_chat(chat_id)
+    if address in user_addresses:
+        update.message.reply_text("This address is already in your list.")
         return
-    if len(stored) >= 5:
-        update.message.reply_text("Maksimum 5 alamat sudah tersimpan. Hapus salah satunya jika ingin menambah alamat baru.")
+    if len(user_addresses) >= 5:
+        update.message.reply_text("You have reached the maximum of 5 addresses. Please remove one before adding another.")
         return
-    stored.append(address)
-    save_addresses(stored)
-    update.message.reply_text(f"Alamat `{address}` berhasil ditambahkan.", parse_mode="Markdown")
+    user_addresses.append(address)
+    update_addresses_for_chat(chat_id, user_addresses)
+    update.message.reply_text(f"Address `{address}` has been added successfully.", parse_mode="Markdown")
+
+def remove(update, context: CallbackContext):
+    chat_id = update.message.chat_id
+    if not context.args:
+        update.message.reply_text("Usage: `/remove <address>`", parse_mode="Markdown")
+        return
+    address = context.args[0].strip()
+    user_addresses = get_addresses_for_chat(chat_id)
+    if address not in user_addresses:
+        update.message.reply_text("The address was not found in your list.")
+        return
+    user_addresses.remove(address)
+    update_addresses_for_chat(chat_id, user_addresses)
+    update.message.reply_text(f"Address `{address}` has been removed.", parse_mode="Markdown")
 
 def ping(update, context: CallbackContext):
-    addresses = get_addresses_from_args(context.args)
-    if addresses is None:
-        update.message.reply_text("Tidak ada alamat yang diberikan atau tersimpan. Gunakan `/add` untuk menambah alamat atau berikan argumen.")
-        return
-    if len(addresses) > 5:
-        update.message.reply_text("Maksimal 5 alamat yang diperbolehkan.")
+    chat_id = update.message.chat_id
+    # Use addresses provided as arguments if available; otherwise, use saved addresses.
+    if context.args:
+        addresses = context.args[:5]
+    else:
+        addresses = get_addresses_for_chat(chat_id)
+    if not addresses:
+        update.message.reply_text("No addresses provided or saved. Please add an address using `/add`.")
         return
 
     current_time = datetime.now(WIB)
-    threshold_status = current_time - timedelta(minutes=5)  # Status berdasarkan 5 menit terakhir
-    threshold_ping = current_time - timedelta(hours=1)        # Ping berdasarkan 1 jam terakhir
+    threshold_status = current_time - timedelta(minutes=5)  # Based on the last 5 minutes
+    threshold_ping = current_time - timedelta(hours=1)        # Based on the last 1 hour
 
     messages = []
     for addr in addresses:
         tx_list = fetch_transactions(addr)
-        # Tentukan Status
         recent_status = [tx for tx in tx_list if datetime.fromtimestamp(int(tx['timeStamp']), WIB) >= threshold_status]
-        status = "Online" if recent_status and recent_status[0].get('isError', '1') == '0' else "Offline" if recent_status else "N/A"
-        # Balance
+        if recent_status:
+            latest_tx = recent_status[0]
+            status = "Online" if latest_tx.get('isError', '1') == '0' else "Offline"
+        else:
+            status = "N/A"
         balance = fetch_balance(addr)
-        # Tentukan Ping: dari transaksi dalam 1 jam, kelompokkan per 6 tx, maksimal 5 grup
         recent_ping = [tx for tx in tx_list if datetime.fromtimestamp(int(tx['timeStamp']), WIB) >= threshold_ping]
         ping_groups = []
         for i in range(0, len(recent_ping), 6):
             group = recent_ping[i:i+6]
-            if not group:
-                continue
-            if all(tx.get('isError', '1') == '0' for tx in group):
-                ping_groups.append("🟢")
-            else:
-                ping_groups.append("🔴")
-        ping_groups = ping_groups[:5]
-        ping_result = " ".join(ping_groups) if ping_groups else "No tx in last 1h"
+            if group:
+                if all(tx.get('isError', '1') == '0' for tx in group):
+                    ping_groups.append("🟢")
+                else:
+                    ping_groups.append("🔴")
+        ping_groups = ping_groups[:5]  # Maximum 5 groups
+        ping_result = " ".join(ping_groups) if ping_groups else "No transactions in the last 1 hour"
         messages.append(
             f"🔹 *Address:* {shorten_address(addr)}\n"
             f"💰 *Balance:* {balance:.4f} ETH\n"
-            f"🟢 *Status (5 mins):* {status}\n"
+            f"🔵 *Status (last 5 mins):* {status}\n"
             f"📡 *Ping (1h, 6 tx/group):* {ping_result}\n"
         )
-    # Buat blok hyperlink (2 link) di atas last update
     arbiscan_links = "🔗 *Arbiscan Links:*\n" + "\n".join(
         [f"{shorten_address(addr)}: [Link](https://sepolia.arbiscan.io/address/{addr})" for addr in addresses]
     )
@@ -275,10 +290,9 @@ def nodestats(update, context: CallbackContext):
 
 def auto_update(context: CallbackContext):
     chat_id = context.job.context
-    # Gunakan alamat dari argumen job (disimpan sebagai list JSON string)
-    addresses = context.job.data  # job.data di sini di-set sebagai list alamat (jika ada) atau jika tidak, maka load dari file
+    addresses = context.job.data  # Addresses provided when /auto was invoked
     if not addresses:
-        addresses = load_addresses()
+        addresses = get_addresses_for_chat(chat_id)
     current_time = datetime.now(WIB)
     threshold_status = current_time - timedelta(minutes=5)
     threshold_ping = current_time - timedelta(hours=1)
@@ -292,18 +306,17 @@ def auto_update(context: CallbackContext):
         ping_groups = []
         for i in range(0, len(recent_ping), 6):
             group = recent_ping[i:i+6]
-            if not group:
-                continue
-            if all(tx.get('isError', '1') == '0' for tx in group):
-                ping_groups.append("🟢")
-            else:
-                ping_groups.append("🔴")
+            if group:
+                if all(tx.get('isError', '1') == '0' for tx in group):
+                    ping_groups.append("🟢")
+                else:
+                    ping_groups.append("🔴")
         ping_groups = ping_groups[:5]
-        ping_result = " ".join(ping_groups) if ping_groups else "No tx in last 1h"
+        ping_result = " ".join(ping_groups) if ping_groups else "No transactions in the last 1 hour"
         messages.append(
             f"🔹 *Address:* {shorten_address(addr)}\n"
             f"💰 *Balance:* {balance:.4f} ETH\n"
-            f"🟢 *Status (5 mins):* {status}\n"
+            f"🔵 *Status (last 5 mins):* {status}\n"
             f"📡 *Ping (1h, 6 tx/group):* {ping_result}\n"
         )
     arbiscan_links = "🔗 *Arbiscan Links:*\n" + "\n".join(
@@ -314,20 +327,20 @@ def auto_update(context: CallbackContext):
     )
     links_block = arbiscan_links + "\n\n" + dashboard_links
     last_update = f"*Last update:* {format_time(get_wib_time())}"
-    final_message = "🔄 *Cortensor Monitor BOT Auto Update*\n\n" + "\n".join(messages) + "\n\n" + links_block + "\n\n" + last_update
+    final_message = ("🔄 *Cortensor Node Monitoring Bot Auto Update*\n\n" +
+                     "\n".join(messages) + "\n\n" + links_block + "\n\n" + last_update)
     context.bot.send_message(chat_id=chat_id, text=final_message, parse_mode="Markdown")
 
 def enable_auto(update, context: CallbackContext):
-    # Ambil alamat dari argumen, jika tidak ada maka load dari file
-    addresses = context.args if context.args else load_addresses()
+    chat_id = update.message.chat_id
+    addresses = context.args if context.args else get_addresses_for_chat(chat_id)
     if not addresses:
-        update.message.reply_text("Tidak ada alamat yang diberikan atau tersimpan. Gunakan `/add` untuk menambah alamat atau berikan argumen.")
+        update.message.reply_text("No addresses provided or saved. Please add an address using `/add` or supply them as arguments.")
         return
     if len(addresses) > 5:
-        update.message.reply_text("Maksimal 5 alamat yang diperbolehkan.")
+        update.message.reply_text("A maximum of 5 addresses is allowed.")
         return
-    # Simpan alamat yang akan digunakan pada job (dalam job.data)
-    context.job_queue.run_repeating(auto_update, interval=UPDATE_INTERVAL, first=10, context=update.message.chat_id, data=addresses)
+    context.job_queue.run_repeating(auto_update, interval=UPDATE_INTERVAL, first=10, context=chat_id, data=addresses)
     update.message.reply_text("✅ Automatic updates activated (every 2 minutes)")
 
 def main():
@@ -336,6 +349,7 @@ def main():
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("help", help_command))
     dp.add_handler(CommandHandler("add", add))
+    dp.add_handler(CommandHandler("remove", remove))
     dp.add_handler(CommandHandler("ping", ping))
     dp.add_handler(CommandHandler("auto", enable_auto))
     dp.add_handler(CommandHandler("nodestats", nodestats))
