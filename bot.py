@@ -1,179 +1,253 @@
-import os
-import requests
+#!/usr/bin/env python3
+# Arbitrum Account Monitor Pro
+
 import logging
-import time
-import asyncio
-import nest_asyncio
+import requests
+from datetime import datetime, timedelta, timezone
+from telegram.ext import Updater, CommandHandler, CallbackContext, JobQueue
 
-# Terapkan nest_asyncio untuk mengizinkan nested event loop.
-nest_asyncio.apply()
+# ==================== CONFIGURATION ====================
+TOKEN = "7572745359:AAFZp9src6sUJHE_L5tPlS7g6-9O846BdGs"
+API_KEY = "AJGGWESPKP9GSWKHQDP4UNZP7SM67FSWWR"
+UPDATE_INTERVAL = 120  # 2 minutes in seconds
+CORTENSOR_API = "https://dashboard-devnet3.cortensor.network"
 
-from telegram import Update
-from telegram.ext import Application, CommandHandler, CallbackContext
+ADDRESSES = {
+    "0x93...F2E": "0x9344ed8328CF501F7A8d87231a2cB4EBd1207F2E",
+    "0xb0...85b": "0xb0aBf49fDD7953A9394428aCE5dEA6fA93b8e85b",
+    "0x77...01d": "0x777efBCab46DbF81F2144E093456f1c99215601d",
+    "0x47...128": "0x47B2F49719f04c1B408c3c5B93ccdaE7E3477128",
+    "0x28...D0a": "0x28Aa8a804a57e08cb46F983a2C988eb24bb58D0a",
+}
 
-# Ambil API key dari environment variables
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-ARBISCAN_API_KEY = os.getenv("ARBISCAN_API_KEY")
+BASE_URL = "https://api-sepolia.arbiscan.io/api"
+WIB = timezone(timedelta(hours=7))
 
-if not TELEGRAM_BOT_TOKEN or not ARBISCAN_API_KEY:
-    raise ValueError("Pastikan TELEGRAM_BOT_TOKEN dan ARBISCAN_API_KEY sudah diset di environment variables.")
-
-# Konfigurasi logging
+# ==================== INITIALIZATION ====================
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-def format_age(ts: str) -> str:
-    """
-    Mengonversi timestamp (dalam detik) menjadi format relatif (misalnya "5 minutes ago").
-    """
+# ==================== HELPER FUNCTIONS ====================
+def get_wib_time() -> datetime:
+    return datetime.now(WIB)
+
+def format_time(time: datetime) -> str:
+    return time.strftime('%Y-%m-%d %H:%M:%S WIB')
+
+def get_age(timestamp: int) -> str:
+    """Mengembalikan relative time (dalam detik/menit/jam/hari) dari timestamp dalam bahasa Inggris."""
+    diff = datetime.now(WIB) - datetime.fromtimestamp(timestamp, WIB)
+    seconds = int(diff.total_seconds())
+    if seconds < 60:
+        return f"{seconds} secs ago"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} mins ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours} hours ago"
+    days = hours // 24
+    return f"{days} days ago"
+
+def fetch_balance(address: str) -> float:
     try:
-        ts_int = int(ts)
-        now = int(time.time())
-        diff = now - ts_int
-        if diff < 60:
-            return f"{diff} seconds ago"
-        elif diff < 3600:
-            return f"{diff // 60} minutes ago"
-        elif diff < 86400:
-            return f"{diff // 3600} hours ago"
-        else:
-            return f"{diff // 86400} days ago"
+        params = {
+            "module": "account",
+            "action": "balance",
+            "address": ADDRESSES[address],
+            "tag": "latest",
+            "apikey": API_KEY
+        }
+        response = requests.get(BASE_URL, params=params, timeout=10)
+        return int(response.json()['result']) / 10**18
     except Exception as e:
-        logger.error("Error menghitung age: %s", e)
-        return "Unknown"
+        logger.error(f"Balance error: {str(e)}")
+        return 0.0
 
-async def start(update: Update, context: CallbackContext) -> None:
-    await update.message.reply_text(
-        "?? *Bot Monitoring Cortensor & Arbiscan*\n"
-        "Gunakan perintah berikut:\n"
-        "/ping <address> - Cek transaksi terbaru\n"
-        "/status <address> - Cek status node\n"
-        "/nodestats <address> - Cek metric node\n"
-        "/info <address> - Live update transaksi\n"
-        "/help - Bantuan penggunaan",
-        parse_mode="Markdown"
-    )
+def fetch_recent_tx(address: str) -> dict:
+    try:
+        params = {
+            "module": "account",
+            "action": "txlist",
+            "address": ADDRESSES[address],
+            "sort": "desc",
+            "offset": 1,
+            "apikey": API_KEY
+        }
+        response = requests.get(BASE_URL, params=params, timeout=10)
+        return response.json()['result'][0] if response.json()['result'] else {}
+    except Exception as e:
+        logger.error(f"TX error: {str(e)}")
+        return {}
 
-async def help_command(update: Update, context: CallbackContext) -> None:
-    await update.message.reply_text(
-        "?? *Panduan Penggunaan*\n"
-        "/ping <address> - Lihat transaksi terbaru (Success/Failed, Method, Age)\n"
-        "/status <address> - Cek apakah node berjalan (5 menit terakhir)\n"
-        "/nodestats <address> - Cek statistik Cortensor node\n"
-        "/info <address> - Live update jika tidak ada transaksi dalam 5 menit terakhir",
-        parse_mode="Markdown"
-    )
+def fetch_node_stats(address: str) -> dict:
+    """Mengambil data statistik node dari Cortensor API"""
+    try:
+        url = f"{CORTENSOR_API}/nodestats/{address}"
+        response = requests.get(url, timeout=15)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        logger.error(f"Node stats error: {str(e)}")
+        return {}
 
-async def ping(update: Update, context: CallbackContext) -> None:
-    if not context.args:
-        await update.message.reply_text("Gunakan: `/ping <address>`", parse_mode="Markdown")
-        return
-
-    address = context.args[0]
-    url = (
-        f"https://api-sepolia.arbiscan.io/api?module=account&action=txlist"
-        f"&address={address}&startblock=0&endblock=99999999&sort=desc&apikey={ARBISCAN_API_KEY}"
-    )
+def format_node_stats(stats: dict) -> str:
+    """Format data statistik node ke dalam tabel"""
+    if not stats:
+        return "❌ Gagal mengambil data statistik node"
     
-    response = requests.get(url)
-    data = response.json()
+    metrics = [
+        ("Request Metrics", stats.get("RequestMetrics")),
+        ("Create Metrics", stats.get("CreateMetrics")),
+        ("Prepare Metrics", stats.get("PrepareMetrics")),
+        ("Start Metrics", stats.get("StartMetrics")),
+        ("Precommit Metrics", stats.get("PrecommitMetrics")),
+        ("Commit Metrics", stats.get("CommitMetrics")),
+        ("End Metrics", stats.get("EndMetrics")),
+        ("Correctness Metrics", stats.get("CorrectnessMetrics")),
+        ("Ping Metrics", stats.get("PingMetrics")),
+        ("Global Ping Metrics", stats.get("GlobalPingMetrics")),
+    ]
 
-    if data.get("status") == "1" and "result" in data:
-        transactions = data["result"][:25]
-        reply = f"?? *Transaksi Terbaru untuk {address}*\n\n"
-        reply += "| Status  |  Method  |  Age  |\n"
-        reply += "|---------|----------|-------|\n"
-        for tx in transactions:
-            status = "✅ Success" if tx.get("isError", "1") == "0" else "❌ Failed"
-            method = tx.get("functionName", "Unknown")
-            # Mengonversi timestamp ke format "AGE"
-            age = format_age(tx.get("timeStamp", "0"))
-            reply += f"| {status} | {method} | {age} |\n"
-        await update.message.reply_text(f"```\n{reply}\n```", parse_mode="Markdown")
-    else:
-        await update.message.reply_text(f"Tidak dapat mengambil data transaksi untuk {address}.")
-
-async def status(update: Update, context: CallbackContext) -> None:
-    if not context.args:
-        await update.message.reply_text("Gunakan: `/status <address>`", parse_mode="Markdown")
-        return
-
-    address = context.args[0]
-    url = (
-        f"https://api-sepolia.arbiscan.io/api?module=account&action=txlist"
-        f"&address={address}&startblock=0&endblock=99999999&sort=desc&apikey={ARBISCAN_API_KEY}"
-    )
+    table = "```\n"
+    table += "| METRIC TYPE         | POINT | COUNTER | SUCCESS RATE |\n"
+    table += "|---------------------|-------|---------|--------------|\n"
     
-    response = requests.get(url)
-    data = response.json()
+    for name, data in metrics:
+        if not data:
+            continue
+        table += f"| {name:<19} | {data.get('Point','N/A'):<5} | {data.get('Counter','N/A'):<7} | {data.get('SuccessRate','N/A'):<12} |\n"
+    
+    return table + "```"
 
-    if data.get("status") == "1" and "result" in data and data["result"]:
-        transactions = data["result"]
-        latest_timestamp = int(transactions[0]["timeStamp"])
-        # Dapatkan waktu UTC saat ini dari worldtimeapi
-        current_timestamp = int(requests.get("http://worldtimeapi.org/api/timezone/Etc/UTC").json()["unixtime"])
-        if current_timestamp - latest_timestamp <= 300:
-            await update.message.reply_text(f"✅ Node untuk {address} *Berjalan*", parse_mode="Markdown")
+# ==================== COMMAND HANDLERS ====================
+def start(update, _):
+    update.message.reply_text(
+        "Arbitrum Account Monitor\n\n"
+        "Commands:\n"
+        "/start - Show this message\n"
+        "/ping - Last 2 transactions\n"
+        "/auto - Enable auto updates\n"
+        "/nodestats <address> - Node statistics\n"
+        "/help - Command help"
+    )
+
+def help(update, _):
+    update.message.reply_text(
+        "Command Help:\n"
+        "/ping - Last 2 transactions\n"
+        "/auto - Auto updates every 2 mins\n"
+        "/nodestats <address> - Node performance stats\n"
+        "/help - Show this message"
+    )
+
+def ping(update, _):
+    transactions = []
+    for address in ADDRESSES:
+        tx = fetch_recent_tx(address)
+        if tx:
+            method = tx.get('functionName', 'Transfer')[:12]
+            time_str = get_age(int(tx['timeStamp']))
+            status = "🟢 Online" if tx.get('isError', '1') == '0' else "🔴 Offline"
         else:
-            await update.message.reply_text(f"⚠️ Node untuk {address} *Berhenti Berjalan*", parse_mode="Markdown")
-    else:
-        await update.message.reply_text(f"Tidak dapat mengambil data status untuk {address}.")
-
-async def nodestats(update: Update, context: CallbackContext) -> None:
-    if not context.args:
-        await update.message.reply_text("Gunakan: `/nodestats <address>`", parse_mode="Markdown")
-        return
-
-    address = context.args[0]
-    url = f"https://dashboard-devnet3.cortensor.network/nodestats/{address}"
+            method = 'N/A'
+            time_str = 'N/A'
+            status = 'N/A'
+        transactions.append((address, method, time_str, status))
     
-    response = requests.get(url)
-    if response.status_code == 200:
-        try:
-            data = response.json()
-        except Exception as e:
-            await update.message.reply_text("Gagal mem-parsing data JSON dari dashboard.", parse_mode="Markdown")
-            return
+    response = (
+        "```\n"
+        "Cortensor Monitor BOT\n"
+        f"Updated: {format_time(get_wib_time())}\n\n"
+        "| Address    | Method       | Time           | Status       |\n"
+        "|------------|--------------|----------------|--------------|\n"
+        + "\n".join([f"| {a:<10} | {m:<12} | {t:<14} | {s:<12} |" for a, m, t, s in transactions])
+        + "\n```"
+    )
+    update.message.reply_text(response, parse_mode="Markdown")
 
-        reply = f"?? *Cortensor Monitor untuk {address}*\n\n"
-        metrics = [
-            "Request", "Create", "Prepare", "Start",
-            "Precommit", "Commit", "End", "Correctness",
-            "Ping", "Global Ping"
-        ]
-        for metric in metrics:
-            point = data.get(f"{metric.lower()}_point", "N/A")
-            counter = data.get(f"{metric.lower()}_counter", "N/A")
-            success_rate = data.get(f"{metric.lower()}_success_rate", "N/A")
-            reply += (
-                f"*{metric} Metrics:*\n"
-                f"Point: {point}\n"
-                f"Counter: {counter}\n"
-                f"Success Rate: {success_rate}\n\n"
-            )
-        # Sertakan link manual agar bisa dicek langsung
-        reply += f"[Cek Data Manual]({url})"
-        await update.message.reply_text(reply, parse_mode="Markdown")
-    else:
-        await update.message.reply_text(f"❌ Tidak dapat mengambil nodestats untuk {address}.")
+def nodestats(update, context):
+    if not context.args:
+        update.message.reply_text("Usage: /nodestats <node_address>")
+        return
+    
+    address = context.args[0]
+    stats = fetch_node_stats(address)
+    
+    response = (
+        f"📊 NODE STATISTICS\n"
+        f"Address: {address}\n"
+        f"Updated: {format_time(get_wib_time())}\n\n"
+        f"{format_node_stats(stats)}"
+    )
+    update.message.reply_text(response, parse_mode="Markdown")
 
-async def info(update: Update, context: CallbackContext) -> None:
-    await update.message.reply_text("?? Fitur info sedang dalam pengembangan!")
+def auto_update(context: CallbackContext):
+    report = []
+    update_time = get_wib_time()
+    
+    for address in ADDRESSES:
+        balance = fetch_balance(address)
+        tx = fetch_recent_tx(address)
+        method = tx.get('functionName', 'Transfer')[:12] if tx else 'N/A'
+        time_str = get_age(int(tx['timeStamp'])) if tx else 'N/A'
+        status = "🟢 Online" if (tx and tx.get('isError', '1') == '0') else ("🔴 Offline" if tx else "N/A")
+        
+        row = {
+            'address': address,
+            'balance': f"{balance:.4f} ETH",
+            'method': method,
+            'time': time_str,
+            'status': status
+        }
+        report.append(row)
+    
+    header = "🔄 Cortensor Monitor BOT\n"
+    body = (
+        "```\n"
+        "| Address    | Balance     | Method       | Time           | Status       |\n"
+        "|------------|-------------|--------------|----------------|--------------|\n"
+        + "\n".join([
+            f"| {r['address']:<10} | {r['balance']:<11} | {r['method']:<12} | {r['time']:<14} | {r['status']:<12} |" 
+            for r in report
+        ])
+        + "\n```"
+    )
+    footer = f"\nLast update: {format_time(update_time)}"
+    
+    context.bot.send_message(
+        context.job.context,
+        text=header + body + footer,
+        parse_mode="Markdown"
+    )
 
-async def main() -> None:
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+def enable_auto(update, context):
+    chat_id = update.message.chat_id
+    context.job_queue.run_repeating(
+        auto_update,
+        interval=UPDATE_INTERVAL,
+        first=10,
+        context=chat_id
+    )
+    update.message.reply_text("✅ Automatic updates activated (2 minute interval)")
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("ping", ping))
-    app.add_handler(CommandHandler("status", status))
-    app.add_handler(CommandHandler("nodestats", nodestats))
-    app.add_handler(CommandHandler("info", info))
+# ==================== MAIN ====================
+def main():
+    updater = Updater(TOKEN)
+    dp = updater.dispatcher
 
-    print("Bot berjalan...")
-    await app.run_polling()
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("help", help))
+    dp.add_handler(CommandHandler("ping", ping))
+    dp.add_handler(CommandHandler("auto", enable_auto))
+    dp.add_handler(CommandHandler("nodestats", nodestats))
+
+    updater.start_polling()
+    logger.info("Service started")
+    updater.idle()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
