@@ -258,6 +258,57 @@ def nodestats(update, context):
         disable_web_page_preview=True
     )
 
+def auto_update(context: CallbackContext):
+    """Job for auto-updates."""
+    job = context.job
+    chat_id = job.context['chat_id']
+    addresses = job.context['addresses']
+    
+    responses = []
+    for addr in addresses[:5]:  # Limit to 5 addresses
+        balance = fetch_balance(addr)
+        txs = fetch_transactions(addr)[:6]  # Last 6 transactions
+        status = "🟢 Online" if any(tx['isError'] == '0' for tx in txs) else "🔴 Offline"
+        
+        responses.append(
+            f"🔹 *{shorten_address(addr)}*\n"
+            f"💵 Balance: `{balance:.4f} ETH`\n"
+            f"📊 Status: {status}\n"
+            f"⏳ Last activity: {get_age(int(txs[0]['timeStamp'])) if txs else 'N/A'}\n"
+            f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | "
+            f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
+        )
+    
+    context.bot.send_message(
+        chat_id=chat_id,
+        text="🔄 *Auto Update*\n\n" + "\n\n".join(responses) + 
+        f"\n\n⏰ *Last update:* {format_time(get_wib_time())}",
+        parse_mode="Markdown",
+        disable_web_page_preview=True
+    )
+
+def enable_auto(update, context):
+    """Handler for /auto command."""
+    chat_id = update.message.chat_id
+    addresses = context.args or get_addresses_for_chat(chat_id)
+    
+    if not addresses:
+        update.message.reply_text("ℹ️ No addresses found! Add one with `/add`.")
+        return
+    
+    # Schedule auto-update job
+    context.job_queue.run_repeating(
+        auto_update,
+        interval=UPDATE_INTERVAL,
+        context={'chat_id': chat_id, 'addresses': addresses[:5]},  # Max 5 addresses
+    )
+    
+    update.message.reply_text(
+        "✅ *Auto-updates enabled!*\n\n"
+        "I'll send updates every 2 minutes with the latest info.",
+        parse_mode="Markdown"
+    )
+
 def alert_check(context: CallbackContext):
     """Check for inactivity and send alerts."""
     job = context.job
@@ -314,6 +365,7 @@ def main():
     dp.add_handler(CommandHandler("add", add))
     dp.add_handler(CommandHandler("remove", remove))
     dp.add_handler(CommandHandler("ping", ping))
+    dp.add_handler(CommandHandler("auto", enable_auto))
     dp.add_handler(CommandHandler("nodestats", nodestats))
     dp.add_handler(CommandHandler("alert", enable_alert))
     
