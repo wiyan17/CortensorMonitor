@@ -18,7 +18,10 @@ API_KEY = os.getenv("API_KEY")
 UPDATE_INTERVAL = 120  # 2 minutes
 CORTENSOR_API = "https://dashboard-devnet3.cortensor.network"
 
-# File to persistently store addresses per chat
+# ADMIN_IDS should be a comma-separated list of Telegram user IDs (e.g., "12345678,87654321")
+ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+
+# File to persistently store addresses per chat (also used for tracking chat IDs)
 DATA_FILE = "data.json"
 
 # ==================== INITIALIZATION ====================
@@ -127,7 +130,9 @@ def fetch_node_stats(address: str) -> dict:
 # ==================== COMMAND HANDLERS ====================
 def start(update, context):
     """Handler for /start command."""
-    update.message.reply_text(
+    user_id = update.message.from_user.id
+    is_admin = user_id in ADMIN_IDS
+    text = (
         "👋 *Welcome to Cortensor Node Monitoring Bot!*\n\n"
         "Here's what I can do:\n"
         "✅ `/add <address>` - Add a wallet address\n"
@@ -138,14 +143,17 @@ def start(update, context):
         "🚫 `/stop` - Stop auto-updates and alerts\n"
         "📈 `/nodestats <address>` - View node stats\n"
         "🚨 `/alert` - Get notified if no transactions in 15 mins\n"
-        "❓ `/help` - Show help menu\n\n"
-        "Let's get started! Add your first address with `/add`.",
-        parse_mode="Markdown"
     )
+    if is_admin:
+        text += "📢 `/announce <message>` - Send an announcement to all chats\n"
+    text += "❓ `/help` - Show help menu\n\nLet's get started! Add your first address with `/add`."
+    update.message.reply_text(text, parse_mode="Markdown")
 
 def help_command(update, context):
     """Handler for /help command."""
-    update.message.reply_text(
+    user_id = update.message.from_user.id
+    is_admin = user_id in ADMIN_IDS
+    text = (
         "📖 *Help Menu*\n\n"
         "1. Add an address: `/add 0x123...`\n"
         "2. Remove an address: `/remove 0x123...`\n"
@@ -154,10 +162,11 @@ def help_command(update, context):
         "5. Enable auto-updates: `/auto`\n"
         "6. Stop auto-updates/alerts: `/stop`\n"
         "7. Set alerts: `/alert`\n"
-        "8. Maximum 5 addresses per chat.\n\n"
-        "Need more help? Just ask!",
-        parse_mode="Markdown"
     )
+    if is_admin:
+        text += "8. Announce a message: `/announce <message>`\n"
+    text += "9. Maximum 5 addresses per chat.\n\nNeed more help? Just ask!"
+    update.message.reply_text(text, parse_mode="Markdown")
 
 def add(update, context):
     """Handler for /add command."""
@@ -316,6 +325,32 @@ def health(update, context):
         disable_web_page_preview=True
     )
 
+def announce(update, context):
+    """Handler for /announce command to send a message to all chats (admin only)."""
+    user_id = update.message.from_user.id
+    if user_id not in ADMIN_IDS:
+        update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+
+    if not context.args:
+        update.message.reply_text("Usage: `/announce <message>`", parse_mode="Markdown")
+        return
+
+    message = " ".join(context.args)
+    data = load_data()
+    if not data:
+        update.message.reply_text("No chats found to announce to.")
+        return
+
+    count = 0
+    for chat_id in data.keys():
+        try:
+            context.bot.send_message(chat_id=int(chat_id), text=message)
+            count += 1
+        except Exception as e:
+            logger.error(f"Error sending announcement to chat {chat_id}: {e}")
+    update.message.reply_text(f"Announcement sent to {count} chats.", parse_mode="Markdown")
+
 # ==================== AUTO UPDATE & ALERT JOBS ====================
 def auto_update(context: CallbackContext):
     """Job for auto-update; always fetches the latest data from storage."""
@@ -450,6 +485,7 @@ def main():
     dp.add_handler(CommandHandler("alert", enable_alert))
     dp.add_handler(CommandHandler("stop", stop))
     dp.add_handler(CommandHandler("health", health))
+    dp.add_handler(CommandHandler("announce", announce))
 
     updater.start_polling()
     updater.idle()
