@@ -27,7 +27,7 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-# Timezone WIB (UTC+7)
+# WIB timezone (UTC+7)
 WIB = timezone(timedelta(hours=7))
 
 # ==================== DATA STORAGE FUNCTIONS ====================
@@ -156,7 +156,7 @@ def help_command(update, context):
         "4. Enable auto-updates: `/auto`\n"
         "5. Stop auto-updates/alerts: `/stop`\n"
         "6. Set alerts: `/alert`\n"
-        "7. Max 5 addresses per chat.\n\n"
+        "7. Maximum 5 addresses per chat.\n\n"
         "Need more help? Just ask!",
         parse_mode="Markdown"
     )
@@ -170,7 +170,7 @@ def add(update, context):
     
     address = context.args[0].lower()
     if not address.startswith("0x") or len(address) != 42:
-        update.message.reply_text("❌ Invalid address! Must start with `0x` and be 42 characters long.")
+        update.message.reply_text("❌ Invalid address! It must start with `0x` and be 42 characters long.")
         return
     
     addresses = get_addresses_for_chat(chat_id)
@@ -179,7 +179,7 @@ def add(update, context):
         return
     
     if len(addresses) >= 5:
-        update.message.reply_text("❌ Max 5 addresses per chat!")
+        update.message.reply_text("❌ Maximum 5 addresses per chat!")
         return
     
     addresses.append(address)
@@ -207,7 +207,6 @@ def remove(update, context):
 def ping(update, context):
     """Handler for /ping command."""
     chat_id = update.message.chat_id
-    # Jika argumen tidak diberikan, ambil dari data yang tersimpan
     addresses = context.args if context.args else get_addresses_for_chat(chat_id)
     
     if not addresses:
@@ -215,9 +214,9 @@ def ping(update, context):
         return
     
     responses = []
-    for addr in addresses[:5]:  # Limit ke 5 alamat
+    for addr in addresses[:5]:  # Limit to 5 addresses
         balance = fetch_balance(addr)
-        txs = fetch_transactions(addr)[:6]  # 6 transaksi terakhir
+        txs = fetch_transactions(addr)[:6]  # Last 6 transactions
         status = "🟢 Online" if any(tx['isError'] == '0' for tx in txs) else "🔴 Offline"
         
         responses.append(
@@ -264,10 +263,10 @@ def nodestats(update, context):
 # ==================== AUTO UPDATE & ALERT JOBS ====================
 
 def auto_update(context: CallbackContext):
-    """Job untuk auto-update; selalu mengambil data terbaru dari storage."""
+    """Job for auto-update; always fetches the latest data from storage."""
     job = context.job
     chat_id = job.context['chat_id']
-    addresses = get_addresses_for_chat(chat_id)[:5]  # ambil maksimal 5 alamat
+    addresses = get_addresses_for_chat(chat_id)[:5]  # Limit to 5 addresses
     if not addresses:
         context.bot.send_message(
             chat_id=chat_id,
@@ -279,7 +278,7 @@ def auto_update(context: CallbackContext):
     responses = []
     for addr in addresses:
         balance = fetch_balance(addr)
-        txs = fetch_transactions(addr)[:6]  # 6 transaksi terakhir
+        txs = fetch_transactions(addr)[:6]  # Last 6 transactions
         status = "🟢 Online" if any(tx['isError'] == '0' for tx in txs) else "🔴 Offline"
         last_activity = get_age(int(txs[0]['timeStamp'])) if txs else 'N/A'
         responses.append(
@@ -300,16 +299,16 @@ def auto_update(context: CallbackContext):
     )
 
 def enable_auto(update, context):
-    """Handler untuk /auto command."""
+    """Handler for /auto command."""
     chat_id = update.message.chat_id
     if not get_addresses_for_chat(chat_id):
-        update.message.reply_text("ℹ️ No addresses found! Add one dengan `/add`.")
+        update.message.reply_text("ℹ️ No addresses found! Add one with `/add`.")
         return
 
-    # Cek apakah job auto-update sudah berjalan untuk chat ini
+    # Check if an auto-update job is already running for this chat
     current_jobs = context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}")
     if current_jobs:
-        update.message.reply_text("ℹ️ Auto-update sudah aktif!")
+        update.message.reply_text("ℹ️ Auto-update is already active!")
         return
 
     context.job_queue.run_repeating(
@@ -321,12 +320,12 @@ def enable_auto(update, context):
     
     update.message.reply_text(
         "✅ *Auto-updates enabled!*\n\n"
-        "Saya akan mengirim update setiap 2 menit dengan data terbaru.",
+        "I will send updates every 2 minutes with the latest data.",
         parse_mode="Markdown"
     )
 
 def alert_check(context: CallbackContext):
-    """Job untuk memeriksa inaktivitas dan mengirim alert."""
+    """Job to check for inactivity and send alerts."""
     job = context.job
     chat_id = job.context['chat_id']
     addresses = get_addresses_for_chat(chat_id)[:5]
@@ -341,19 +340,19 @@ def alert_check(context: CallbackContext):
                     chat_id=chat_id,
                     text=f"🚨 *Inactivity Alert!*\n\n"
                          f"🔹 Address: `{shorten_address(addr)}`\n"
-                         f"⏳ Tidak ada transaksi dalam 15 menit terakhir!\n\n"
+                         f"⏳ No transactions in the last 15 minutes!\n\n"
                          f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | "
                          f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{addr})",
                     parse_mode="Markdown",
                     disable_web_page_preview=True
                 )
         else:
-            # Jika tidak ada transaksi sama sekali, langsung kirim alert
+            # If no transactions found at all, send alert immediately
             context.bot.send_message(
                 chat_id=chat_id,
                 text=f"🚨 *Inactivity Alert!*\n\n"
                      f"🔹 Address: `{shorten_address(addr)}`\n"
-                     f"⏳ Tidak ada transaksi ditemukan!\n\n"
+                     f"⏳ No transactions found!\n\n"
                      f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | "
                      f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{addr})",
                 parse_mode="Markdown",
@@ -361,16 +360,16 @@ def alert_check(context: CallbackContext):
             )
 
 def enable_alert(update, context):
-    """Handler untuk /alert command."""
+    """Handler for /alert command."""
     chat_id = update.message.chat_id
     if not get_addresses_for_chat(chat_id):
-        update.message.reply_text("ℹ️ No addresses found! Add one dengan `/add`.")
+        update.message.reply_text("ℹ️ No addresses found! Add one with `/add`.")
         return
 
-    # Cek apakah job alert sudah berjalan untuk chat ini
+    # Check if an alert job is already running for this chat
     current_jobs = context.job_queue.get_jobs_by_name(f"alert_{chat_id}")
     if current_jobs:
-        update.message.reply_text("ℹ️ Alerts sudah aktif!")
+        update.message.reply_text("ℹ️ Alerts are already active!")
         return
 
     context.job_queue.run_repeating(
@@ -382,12 +381,12 @@ def enable_alert(update, context):
     
     update.message.reply_text(
         "✅ *Alerts enabled!*\n\n"
-        "Saya akan mengirim notifikasi jika tidak ada transaksi dalam 15 menit.",
+        "I will notify you if there are no transactions in the last 15 minutes.",
         parse_mode="Markdown"
     )
 
 def stop(update, context):
-    """Handler untuk /stop command guna menghentikan auto-update dan alert."""
+    """Handler for /stop command to stop auto-update and alert jobs."""
     chat_id = update.message.chat_id
     removed_jobs = 0
     for job_name in (f"auto_update_{chat_id}", f"alert_{chat_id}"):
@@ -396,9 +395,9 @@ def stop(update, context):
             job.schedule_removal()
             removed_jobs += 1
     if removed_jobs:
-        update.message.reply_text("✅ *Auto-update dan alerts telah dihentikan!*", parse_mode="Markdown")
+        update.message.reply_text("✅ *Auto-update and alerts have been stopped!*", parse_mode="Markdown")
     else:
-        update.message.reply_text("ℹ️ Tidak ada job aktif yang ditemukan.")
+        update.message.reply_text("ℹ️ No active jobs found.")
 
 # ==================== MAIN FUNCTION ====================
 
