@@ -127,6 +127,49 @@ def fetch_node_stats(address: str) -> dict:
         logger.error(f"Node stats error: {str(e)}")
         return {}
 
+# ==================== JOB FUNCTION ====================
+def auto_update(context: CallbackContext):
+    """Job for auto-update; always fetches the latest data from storage."""
+    job = context.job
+    chat_id = job.context['chat_id']
+    addresses = get_addresses_for_chat(chat_id)[:5]
+    if not addresses:
+        context.bot.send_message(
+            chat_id=chat_id,
+            text="ℹ️ No addresses found! Add one with `/add`.",
+            parse_mode="Markdown"
+        )
+        return
+
+    responses = []
+    for addr in addresses:
+        balance = fetch_balance(addr)
+        txs = fetch_transactions(addr)[:6]
+        if txs:
+            last_tx_time = int(txs[0]['timeStamp'])
+            time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
+            status = "🟢 Online" if time_diff <= timedelta(minutes=5) else "🔴 Offline"
+            last_activity = get_age(last_tx_time)
+        else:
+            status = "🔴 Offline"
+            last_activity = "N/A"
+        responses.append(
+            f"🔹 *{shorten_address(addr)}*\n"
+            f"💵 Balance: `{balance:.4f} ETH`\n"
+            f"📊 Status: {status}\n"
+            f"⏳ Last activity: {last_activity}\n"
+            f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | "
+            f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
+        )
+
+    context.bot.send_message(
+        chat_id=chat_id,
+        text="🔄 *Auto Update*\n\n" + "\n\n".join(responses) +
+             f"\n\n⏰ *Last update:* {format_time(get_wib_time())}",
+        parse_mode="Markdown",
+        disable_web_page_preview=True
+    )
+
 # ==================== COMMAND HANDLERS ====================
 def start(update, context):
     """Handler for /start command."""
@@ -165,7 +208,8 @@ def help_command(update, context):
     )
     if is_admin:
         text += "8. Announce a message: `/announce <message>`\n"
-    text += "9. Maximum 5 addresses per chat.\n\nNeed more help? Just ask!"
+    text += "9. Clear recent messages: `/clear`\n"
+    text += "Maximum 5 addresses per chat.\n\nNeed more help? Just ask!"
     update.message.reply_text(text, parse_mode="Markdown")
 
 def add(update, context):
@@ -215,7 +259,6 @@ def ping(update, context):
     """Handler for /ping command."""
     chat_id = update.message.chat_id
     addresses = context.args if context.args else get_addresses_for_chat(chat_id)
-
     if not addresses:
         update.message.reply_text("ℹ️ No addresses found! Add one with `/add`.")
         return
@@ -232,7 +275,6 @@ def ping(update, context):
         else:
             status = "🔴 Offline"
             last_activity = "N/A"
-
         responses.append(
             f"🔹 *{shorten_address(addr)}*\n"
             f"💵 Balance: `{balance:.4f} ETH`\n"
@@ -257,7 +299,6 @@ def nodestats(update, context):
 
     address = context.args[0]
     stats = fetch_node_stats(address)
-
     if not stats:
         update.message.reply_text("❌ No data found for this address!")
         return
@@ -280,7 +321,6 @@ def health(update, context):
     addresses = context.args if context.args else get_addresses_for_chat(chat_id)
     now = datetime.now(WIB)
     one_hour_ago = now - timedelta(hours=1)
-
     if not addresses:
         update.message.reply_text("ℹ️ No addresses found! Add one with `/add`.")
         return
@@ -308,7 +348,6 @@ def health(update, context):
         else:
             last_activity = "N/A"
             health_status = "No transactions in the last hour"
-
         responses.append(
             f"🔹 *{shorten_address(addr)}*\n"
             f"💵 Balance: `{balance:.4f} ETH`\n"
@@ -331,7 +370,7 @@ def enable_auto(update, context):
     if not get_addresses_for_chat(chat_id):
         update.message.reply_text("ℹ️ No addresses found! Add one with `/add`.")
         return
-    # Check if auto-update job already exists for this chat
+    # Check if an auto-update job already exists for this chat
     current_jobs = context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}")
     if current_jobs:
         update.message.reply_text("ℹ️ Auto-update is already active!")
@@ -344,30 +383,49 @@ def enable_auto(update, context):
     )
     update.message.reply_text("✅ *Auto-updates enabled!*\n\nI will send updates every 2 minutes with the latest data.", parse_mode="Markdown")
 
+def clear(update, context):
+    """Admin command to clear recent messages in the chat."""
+    chat_id = update.message.chat_id
+    user_id = update.message.from_user.id
+    try:
+        admins = [admin.user.id for admin in context.bot.get_chat_administrators(chat_id)]
+    except Exception as e:
+        update.message.reply_text("⚠️ Unable to check admin status.")
+        return
+    if user_id not in admins:
+        update.message.reply_text("❌ You must be an admin to use this command!")
+        return
+    last_msg_id = update.message.message_id
+    count = 0
+    for msg_id in range(last_msg_id - 50, last_msg_id + 1):
+        try:
+            context.bot.delete_message(chat_id, msg_id)
+            count += 1
+        except Exception as e:
+            continue
+    update.message.reply_text(f"✅ Cleared {count} messages.", parse_mode="Markdown")
+
 def announce(update, context):
     """Handler for /announce command to send a message to all chats (admin only)."""
     user_id = update.message.from_user.id
     if user_id not in ADMIN_IDS:
         update.message.reply_text("❌ You are not authorized to use this command.")
         return
-
     if not context.args:
         update.message.reply_text("Usage: `/announce <message>`", parse_mode="Markdown")
         return
-
     message = " ".join(context.args)
     data = load_data()
     if not data:
         update.message.reply_text("No chats found to announce to.")
         return
-
     count = 0
-    for chat_id in data.keys():
+    for chat in data.keys():
         try:
-            context.bot.send_message(chat_id=int(chat_id), text=message)
+            context.bot.send_message(chat_id=int(chat), text=message)
             count += 1
         except Exception as e:
-            logger.error(f"Error sending announcement to chat {chat_id}: {e}")
+            logger.error(f"Error sending announcement to chat {chat}: {e}")
     update.message.reply_text(f"Announcement sent to {count} chats.", parse_mode="Markdown")
 
 def alert_check(context: CallbackContext):
@@ -375,7 +433,6 @@ def alert_check(context: CallbackContext):
     job = context.job
     chat_id = job.context['chat_id']
     addresses = get_addresses_for_chat(chat_id)[:5]
-
     for addr in addresses:
         txs = fetch_transactions(addr)
         if txs:
@@ -410,19 +467,16 @@ def enable_alert(update, context):
     if not get_addresses_for_chat(chat_id):
         update.message.reply_text("ℹ️ No addresses found! Add one with `/add`.")
         return
-
     current_jobs = context.job_queue.get_jobs_by_name(f"alert_{chat_id}")
     if current_jobs:
         update.message.reply_text("ℹ️ Alerts are already active!")
         return
-
     context.job_queue.run_repeating(
         alert_check,
         interval=900,  # 15 minutes
         context={'chat_id': chat_id},
         name=f"alert_{chat_id}"
     )
-
     update.message.reply_text(
         "✅ *Alerts enabled!*\n\n"
         "I will notify you if there are no transactions in the last 15 minutes.",
@@ -461,9 +515,9 @@ def main():
     dp.add_handler(CommandHandler("stop", stop))
     dp.add_handler(CommandHandler("health", health))
     dp.add_handler(CommandHandler("announce", announce))
+    dp.add_handler(CommandHandler("clear", clear))
 
     updater.start_polling()
     updater.idle()
 
-if __name__ == "__main__":
-    main()
+if __name__
