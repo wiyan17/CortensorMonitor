@@ -325,6 +325,25 @@ def health(update, context):
         disable_web_page_preview=True
     )
 
+def enable_auto(update, context):
+    """Handler for /auto command to enable auto-updates."""
+    chat_id = update.message.chat_id
+    if not get_addresses_for_chat(chat_id):
+        update.message.reply_text("ℹ️ No addresses found! Add one with `/add`.")
+        return
+    # Check if auto-update job already exists for this chat
+    current_jobs = context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}")
+    if current_jobs:
+        update.message.reply_text("ℹ️ Auto-update is already active!")
+        return
+    context.job_queue.run_repeating(
+        auto_update,
+        interval=UPDATE_INTERVAL,
+        context={'chat_id': chat_id},
+        name=f"auto_update_{chat_id}"
+    )
+    update.message.reply_text("✅ *Auto-updates enabled!*\n\nI will send updates every 2 minutes with the latest data.", parse_mode="Markdown")
+
 def announce(update, context):
     """Handler for /announce command to send a message to all chats (admin only)."""
     user_id = update.message.from_user.id
@@ -350,50 +369,6 @@ def announce(update, context):
         except Exception as e:
             logger.error(f"Error sending announcement to chat {chat_id}: {e}")
     update.message.reply_text(f"Announcement sent to {count} chats.", parse_mode="Markdown")
-
-# ==================== AUTO UPDATE & ALERT JOBS ====================
-def auto_update(context: CallbackContext):
-    """Job for auto-update; always fetches the latest data from storage."""
-    job = context.job
-    chat_id = job.context['chat_id']
-    addresses = get_addresses_for_chat(chat_id)[:5]
-    if not addresses:
-        context.bot.send_message(
-            chat_id=chat_id,
-            text="ℹ️ No addresses found! Add one with `/add`.",
-            parse_mode="Markdown"
-        )
-        return
-
-    responses = []
-    for addr in addresses:
-        balance = fetch_balance(addr)
-        txs = fetch_transactions(addr)[:6]
-        if txs:
-            last_tx_time = int(txs[0]['timeStamp'])
-            time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
-            status = "🟢 Online" if time_diff <= timedelta(minutes=5) else "🔴 Offline"
-            last_activity = get_age(last_tx_time)
-        else:
-            status = "🔴 Offline"
-            last_activity = "N/A"
-
-        responses.append(
-            f"🔹 *{shorten_address(addr)}*\n"
-            f"💵 Balance: `{balance:.4f} ETH`\n"
-            f"📊 Status: {status}\n"
-            f"⏳ Last activity: {last_activity}\n"
-            f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | "
-            f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
-        )
-
-    context.bot.send_message(
-        chat_id=chat_id,
-        text="🔄 *Auto Update*\n\n" + "\n\n".join(responses) +
-             f"\n\n⏰ *Last update:* {format_time(get_wib_time())}",
-        parse_mode="Markdown",
-        disable_web_page_preview=True
-    )
 
 def alert_check(context: CallbackContext):
     """Job to check for inactivity and send alerts."""
