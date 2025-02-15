@@ -4,7 +4,8 @@
 import logging
 import requests
 from datetime import datetime, timedelta, timezone
-from telegram.ext import Updater, CommandHandler, CallbackContext, JobQueue
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackContext
 
 # ==================== CONFIGURATION ====================
 TOKEN = "7572745359:AAFZp9src6sUJHE_L5tPlS7g6-9O846BdGs"
@@ -38,7 +39,7 @@ def format_time(time: datetime) -> str:
     return time.strftime('%Y-%m-%d %H:%M:%S WIB')
 
 def get_age(timestamp: int) -> str:
-    """Mengembalikan relative time (dalam detik/menit/jam/hari) dari timestamp dalam bahasa Inggris."""
+    """Return relative time (in secs/mins/hours/days) from a timestamp (in English)."""
     diff = datetime.now(WIB) - datetime.fromtimestamp(timestamp, WIB)
     seconds = int(diff.total_seconds())
     if seconds < 60:
@@ -78,13 +79,14 @@ def fetch_recent_tx(address: str) -> dict:
             "apikey": API_KEY
         }
         response = requests.get(BASE_URL, params=params, timeout=10)
-        return response.json()['result'][0] if response.json()['result'] else {}
+        results = response.json().get('result', [])
+        return results[0] if results else {}
     except Exception as e:
         logger.error(f"TX error: {str(e)}")
         return {}
 
 def fetch_node_stats(address: str) -> dict:
-    """Mengambil data statistik node dari Cortensor API"""
+    """Fetch node statistics from Cortensor API."""
     try:
         url = f"{CORTENSOR_API}/nodestats/{address}"
         response = requests.get(url, timeout=15)
@@ -95,9 +97,9 @@ def fetch_node_stats(address: str) -> dict:
         return {}
 
 def format_node_stats(stats: dict) -> str:
-    """Format data statistik node ke dalam tabel"""
+    """Format node statistics data into a table."""
     if not stats:
-        return "❌ Gagal mengambil data statistik node"
+        return "❌ Failed to fetch node statistics"
     
     metrics = [
         ("Request Metrics", stats.get("RequestMetrics")),
@@ -121,11 +123,12 @@ def format_node_stats(stats: dict) -> str:
             continue
         table += f"| {name:<19} | {data.get('Point','N/A'):<5} | {data.get('Counter','N/A'):<7} | {data.get('SuccessRate','N/A'):<12} |\n"
     
-    return table + "```"
+    table += "```"
+    return table
 
 # ==================== COMMAND HANDLERS ====================
-def start(update, _):
-    update.message.reply_text(
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
         "Arbitrum Account Monitor\n\n"
         "Commands:\n"
         "/start - Show this message\n"
@@ -135,8 +138,8 @@ def start(update, _):
         "/help - Command help"
     )
 
-def help(update, _):
-    update.message.reply_text(
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
         "Command Help:\n"
         "/ping - Last 2 transactions\n"
         "/auto - Auto updates every 2 mins\n"
@@ -144,7 +147,7 @@ def help(update, _):
         "/help - Show this message"
     )
 
-def ping(update, _):
+async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     transactions = []
     for address in ADDRESSES:
         tx = fetch_recent_tx(address)
@@ -167,25 +170,24 @@ def ping(update, _):
         + "\n".join([f"| {a:<10} | {m:<12} | {t:<14} | {s:<12} |" for a, m, t, s in transactions])
         + "\n```"
     )
-    update.message.reply_text(response, parse_mode="Markdown")
+    await update.message.reply_text(response, parse_mode="Markdown")
 
-def nodestats(update, context):
+async def nodestats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        update.message.reply_text("Usage: /nodestats <node_address>")
+        await update.message.reply_text("Usage: /nodestats <node_address>")
         return
     
     address = context.args[0]
     stats = fetch_node_stats(address)
-    
     response = (
         f"📊 NODE STATISTICS\n"
         f"Address: {address}\n"
         f"Updated: {format_time(get_wib_time())}\n\n"
         f"{format_node_stats(stats)}"
     )
-    update.message.reply_text(response, parse_mode="Markdown")
+    await update.message.reply_text(response, parse_mode="Markdown")
 
-def auto_update(context: CallbackContext):
+async def auto_update(context: CallbackContext):
     report = []
     update_time = get_wib_time()
     
@@ -195,7 +197,6 @@ def auto_update(context: CallbackContext):
         method = tx.get('functionName', 'Transfer')[:12] if tx else 'N/A'
         time_str = get_age(int(tx['timeStamp'])) if tx else 'N/A'
         status = "🟢 Online" if (tx and tx.get('isError', '1') == '0') else ("🔴 Offline" if tx else "N/A")
-        
         row = {
             'address': address,
             'balance': f"{balance:.4f} ETH",
@@ -211,43 +212,35 @@ def auto_update(context: CallbackContext):
         "| Address    | Balance     | Method       | Time           | Status       |\n"
         "|------------|-------------|--------------|----------------|--------------|\n"
         + "\n".join([
-            f"| {r['address']:<10} | {r['balance']:<11} | {r['method']:<12} | {r['time']:<14} | {r['status']:<12} |" 
+            f"| {r['address']:<10} | {r['balance']:<11} | {r['method']:<12} | {r['time']:<14} | {r['status']:<12} |"
             for r in report
         ])
         + "\n```"
     )
     footer = f"\nLast update: {format_time(update_time)}"
     
-    context.bot.send_message(
-        context.job.context,
+    await context.bot.send_message(
+        chat_id=context.job.chat_id,
         text=header + body + footer,
         parse_mode="Markdown"
     )
 
-def enable_auto(update, context):
-    chat_id = update.message.chat_id
-    context.job_queue.run_repeating(
-        auto_update,
-        interval=UPDATE_INTERVAL,
-        first=10,
-        context=chat_id
-    )
-    update.message.reply_text("✅ Automatic updates activated (2 minute interval)")
+async def enable_auto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    context.job_queue.run_repeating(auto_update, interval=UPDATE_INTERVAL, first=10, chat_id=chat_id)
+    await update.message.reply_text("✅ Automatic updates activated (2 minute interval)")
 
 # ==================== MAIN ====================
 def main():
-    updater = Updater(TOKEN)
-    dp = updater.dispatcher
+    application = ApplicationBuilder().token(TOKEN).build()
 
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("help", help))
-    dp.add_handler(CommandHandler("ping", ping))
-    dp.add_handler(CommandHandler("auto", enable_auto))
-    dp.add_handler(CommandHandler("nodestats", nodestats))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("ping", ping))
+    application.add_handler(CommandHandler("auto", enable_auto))
+    application.add_handler(CommandHandler("nodestats", nodestats))
 
-    updater.start_polling()
-    logger.info("Service started")
-    updater.idle()
+    application.run_polling()
 
 if __name__ == "__main__":
     main()
