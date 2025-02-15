@@ -183,7 +183,6 @@ def help_command(update, context: CallbackContext):
         "5. Display node statistics with:\n"
         "   `/nodestats 0x1234567890abcdef1234567890abcdef12345678`\n\n"
         "Each chat stores its own list of addresses, ensuring data privacy per user.\n"
-        "For security, the API key and token are loaded from a *.env* file."
     )
     update.message.reply_text(text, parse_mode="Markdown")
 
