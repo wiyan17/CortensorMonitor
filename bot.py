@@ -188,6 +188,8 @@ async def nodestats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(response, parse_mode="Markdown")
 
 async def auto_update(context: CallbackContext):
+    # Dapatkan chat_id dari data job yang telah diset
+    chat_id = context.job.data
     report = []
     update_time = get_wib_time()
     
@@ -220,18 +222,19 @@ async def auto_update(context: CallbackContext):
     footer = f"\nLast update: {format_time(update_time)}"
     
     await context.bot.send_message(
-        chat_id=context.job.data,
+        chat_id=chat_id,
         text=header + body + footer,
         parse_mode="Markdown"
     )
 
 async def enable_auto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    context.application.job_queue.run_repeating(
+    # Gunakan update.get_app() untuk mengakses job queue dari aplikasi
+    update.get_app().job_queue.run_repeating(
         auto_update,
         interval=UPDATE_INTERVAL,
         first=10,
-        context=chat_id
+        data=chat_id
     )
     await update.message.reply_text("✅ Automatic updates activated (2 minute interval)")
 
