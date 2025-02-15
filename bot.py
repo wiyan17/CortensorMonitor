@@ -171,7 +171,7 @@ def auto_update(context: CallbackContext):
     )
 
 # ==================== COMMAND HANDLERS ====================
-def start(update, context):
+def start_handler(update, context):
     """Handler for /start command."""
     user_id = update.message.from_user.id
     is_admin = user_id in ADMIN_IDS
@@ -192,7 +192,7 @@ def start(update, context):
     text += "❓ `/help` - Show help menu\n\nLet's get started! Add your first address with `/add`."
     update.message.reply_text(text, parse_mode="Markdown")
 
-def help_command(update, context):
+def help_handler(update, context):
     """Handler for /help command."""
     user_id = update.message.from_user.id
     is_admin = user_id in ADMIN_IDS
@@ -212,57 +212,49 @@ def help_command(update, context):
     text += "Maximum 5 addresses per chat.\n\nNeed more help? Just ask!"
     update.message.reply_text(text, parse_mode="Markdown")
 
-def add(update, context):
+def add_handler(update, context):
     """Handler for /add command."""
     chat_id = update.message.chat_id
     if not context.args:
         update.message.reply_text("Usage: `/add 0x123...`", parse_mode="Markdown")
         return
-
     address = context.args[0].lower()
     if not address.startswith("0x") or len(address) != 42:
         update.message.reply_text("❌ Invalid address! It must start with `0x` and be 42 characters long.")
         return
-
     addresses = get_addresses_for_chat(chat_id)
     if address in addresses:
         update.message.reply_text("⚠️ Address already added!")
         return
-
     if len(addresses) >= 5:
         update.message.reply_text("❌ Maximum 5 addresses per chat!")
         return
-
     addresses.append(address)
     update_addresses_for_chat(chat_id, addresses)
     update.message.reply_text(f"✅ Added `{shorten_address(address)}` to your list!", parse_mode="Markdown")
 
-def remove(update, context):
+def remove_handler(update, context):
     """Handler for /remove command."""
     chat_id = update.message.chat_id
     if not context.args:
         update.message.reply_text("Usage: `/remove 0x123...`", parse_mode="Markdown")
         return
-
     address = context.args[0].lower()
     addresses = get_addresses_for_chat(chat_id)
-
     if address not in addresses:
         update.message.reply_text("❌ Address not found in your list!")
         return
-
     addresses.remove(address)
     update_addresses_for_chat(chat_id, addresses)
     update.message.reply_text(f"✅ Removed `{shorten_address(address)}` from your list!", parse_mode="Markdown")
 
-def ping(update, context):
+def ping_handler(update, context):
     """Handler for /ping command."""
     chat_id = update.message.chat_id
     addresses = context.args if context.args else get_addresses_for_chat(chat_id)
     if not addresses:
         update.message.reply_text("ℹ️ No addresses found! Add one with `/add`.")
         return
-
     responses = []
     for addr in addresses[:5]:
         balance = fetch_balance(addr)
@@ -283,7 +275,6 @@ def ping(update, context):
             f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | "
             f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
         )
-
     update.message.reply_text(
         "📊 *Node Status*\n\n" + "\n\n".join(responses) +
         f"\n\n⏰ *Last update:* {format_time(get_wib_time())}",
@@ -291,18 +282,16 @@ def ping(update, context):
         disable_web_page_preview=True
     )
 
-def nodestats(update, context):
+def nodestats_handler(update, context):
     """Handler for /nodestats command."""
     if not context.args:
         update.message.reply_text("Usage: `/nodestats 0x123...`", parse_mode="Markdown")
         return
-
     address = context.args[0]
     stats = fetch_node_stats(address)
     if not stats:
         update.message.reply_text("❌ No data found for this address!")
         return
-
     update.message.reply_text(
         f"📈 *Node Stats for {shorten_address(address)}*\n\n"
         f"• Uptime: `{stats.get('uptime', 'N/A')}`\n"
@@ -315,7 +304,7 @@ def nodestats(update, context):
         disable_web_page_preview=True
     )
 
-def health(update, context):
+def health_handler(update, context):
     """Handler for /health command to check node health based on the last 1 hour of transactions."""
     chat_id = update.message.chat_id
     addresses = context.args if context.args else get_addresses_for_chat(chat_id)
@@ -324,22 +313,17 @@ def health(update, context):
     if not addresses:
         update.message.reply_text("ℹ️ No addresses found! Add one with `/add`.")
         return
-
     responses = []
     for addr in addresses[:5]:
         balance = fetch_balance(addr)
         txs = fetch_transactions(addr)
-        # Filter transactions from the last 1 hour
         recent_txs = [tx for tx in txs if datetime.fromtimestamp(int(tx['timeStamp']), WIB) >= one_hour_ago]
         if recent_txs:
             last_tx_time = int(recent_txs[0]['timeStamp'])
             last_activity = get_age(last_tx_time)
-            # Group transactions into chunks of 6
             groups = [recent_txs[i:i+6] for i in range(0, len(recent_txs), 6)]
             group_statuses = []
             for group in groups:
-                # Mark group green (🟩) if all transactions are successful (isError == "0"),
-                # otherwise mark red (🟥)
                 if any(tx.get('isError') != '0' for tx in group):
                     group_statuses.append("🟥")
                 else:
@@ -356,7 +340,6 @@ def health(update, context):
             f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | "
             f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
         )
-
     update.message.reply_text(
         "🩺 *Node Health*\n\n" + "\n\n".join(responses) +
         f"\n\n⏰ *Last update:* {format_time(get_wib_time())}",
@@ -364,13 +347,12 @@ def health(update, context):
         disable_web_page_preview=True
     )
 
-def enable_auto(update, context):
+def enable_auto_handler(update, context):
     """Handler for /auto command to enable auto-updates."""
     chat_id = update.message.chat_id
     if not get_addresses_for_chat(chat_id):
         update.message.reply_text("ℹ️ No addresses found! Add one with `/add`.")
         return
-    # Check if an auto-update job already exists for this chat
     current_jobs = context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}")
     if current_jobs:
         update.message.reply_text("ℹ️ Auto-update is already active!")
@@ -383,7 +365,7 @@ def enable_auto(update, context):
     )
     update.message.reply_text("✅ *Auto-updates enabled!*\n\nI will send updates every 2 minutes with the latest data.", parse_mode="Markdown")
 
-def clear(update, context):
+def clear_handler(update, context):
     """Admin command to clear recent messages in the chat."""
     chat_id = update.message.chat_id
     user_id = update.message.from_user.id
@@ -405,7 +387,7 @@ def clear(update, context):
             continue
     update.message.reply_text(f"✅ Cleared {count} messages.", parse_mode="Markdown")
 
-def announce(update, context):
+def announce_handler(update, context):
     """Handler for /announce command to send a message to all chats (admin only)."""
     user_id = update.message.from_user.id
     if user_id not in ADMIN_IDS:
@@ -461,7 +443,7 @@ def alert_check(context: CallbackContext):
                 disable_web_page_preview=True
             )
 
-def enable_alert(update, context):
+def enable_alert_handler(update, context):
     """Handler for /alert command."""
     chat_id = update.message.chat_id
     if not get_addresses_for_chat(chat_id):
@@ -483,7 +465,7 @@ def enable_alert(update, context):
         parse_mode="Markdown"
     )
 
-def stop(update, context):
+def stop_handler(update, context):
     """Handler for /stop command to stop auto-update and alert jobs."""
     chat_id = update.message.chat_id
     removed_jobs = 0
@@ -504,20 +486,21 @@ def main():
     dp = updater.dispatcher
 
     # Register handlers
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("help", help_command))
-    dp.add_handler(CommandHandler("add", add))
-    dp.add_handler(CommandHandler("remove", remove))
-    dp.add_handler(CommandHandler("ping", ping))
-    dp.add_handler(CommandHandler("auto", enable_auto))
-    dp.add_handler(CommandHandler("nodestats", nodestats))
-    dp.add_handler(CommandHandler("alert", enable_alert))
-    dp.add_handler(CommandHandler("stop", stop))
-    dp.add_handler(CommandHandler("health", health))
-    dp.add_handler(CommandHandler("announce", announce))
-    dp.add_handler(CommandHandler("clear", clear))
+    dp.add_handler(CommandHandler("start", start_handler))
+    dp.add_handler(CommandHandler("help", help_handler))
+    dp.add_handler(CommandHandler("add", add_handler))
+    dp.add_handler(CommandHandler("remove", remove_handler))
+    dp.add_handler(CommandHandler("ping", ping_handler))
+    dp.add_handler(CommandHandler("auto", enable_auto_handler))
+    dp.add_handler(CommandHandler("nodestats", nodestats_handler))
+    dp.add_handler(CommandHandler("alert", enable_alert_handler))
+    dp.add_handler(CommandHandler("stop", stop_handler))
+    dp.add_handler(CommandHandler("health", health_handler))
+    dp.add_handler(CommandHandler("announce", announce_handler))
+    dp.add_handler(CommandHandler("clear", clear_handler))
 
     updater.start_polling()
     updater.idle()
 
-if __name__
+if __name__ == "__main__":
+    main()
