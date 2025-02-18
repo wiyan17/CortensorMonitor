@@ -154,7 +154,8 @@ def auto_update(context: CallbackContext):
             f"💵 Balance: {balance:.4f} ETH\n"
             f"📊 Status: {status}\n"
             f"⏳ Last activity: {last_activity}\n"
-            f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr})"
+            f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | "
+f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
         )
     context.bot.send_message(
         chat_id=chat_id,
