@@ -155,7 +155,7 @@ def auto_update(context: CallbackContext):
             f"📊 Status: {status}\n"
             f"⏳ Last activity: {last_activity}\n"
             f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | "
-f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
+            f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
         )
     context.bot.send_message(
         chat_id=chat_id,
@@ -324,7 +324,8 @@ def menu_check_status(update, context):
             f"💵 Balance: {balance:.4f} ETH\n"
             f"📊 Status: {status}\n"
             f"⏳ Last activity: {last_activity}\n"
-            f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr})"
+            f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | "
+            f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
         )
     update.message.reply_text("📊 Node Status\n\n" + "\n\n".join(responses) +
                               f"\n\n⏰ Last update: {format_time(get_wib_time())}",
@@ -362,7 +363,8 @@ def menu_node_health(update, context):
             f"💵 Balance: {balance:.4f} ETH\n"
             f"⏳ Last activity: {last_activity}\n"
             f"🩺 Health: {health_status}\n"
-            f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr})"
+            f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | "
+            f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
         )
     update.message.reply_text("🩺 Node Health\n\n" + "\n\n".join(responses) +
                               f"\n\n⏰ Last update: {format_time(get_wib_time())}",
