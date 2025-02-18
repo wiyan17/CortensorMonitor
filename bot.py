@@ -236,18 +236,24 @@ def get_main_menu_keyboard(is_admin: bool) -> InlineKeyboardMarkup:
 def show_main_menu(update, context):
     is_admin = update.effective_user.id in ADMIN_IDS
     keyboard = get_main_menu_keyboard(is_admin)
-    text = "*Main Menu:*\nPlease choose an option:"
+    welcome_text = (
+        "👋 Selamat datang di *Cortensor Node Monitoring Bot!* \n\n"
+        "Saya di sini untuk membantu Anda memantau status node dengan mudah dan menyenangkan. "
+        "Pilih opsi di bawah untuk memulai, dan jangan ragu untuk mengeksplorasi semua fitur yang tersedia!\n\n"
+        "💡 *Tip*: Gunakan fitur auto-update untuk mendapatkan pembaruan otomatis setiap 5 menit.\n\n"
+        "Semoga Anda menikmati pengalaman menggunakan bot ini! 🚀"
+    )
     if update.callback_query:
         update.callback_query.edit_message_text(
-            text=text,
+            text=welcome_text,
             reply_markup=keyboard,
             parse_mode="Markdown",
             disable_web_page_preview=True
         )
     else:
-        update.message.reply_text(text=text, reply_markup=keyboard, parse_mode="Markdown")
+        update.message.reply_text(text=welcome_text, reply_markup=keyboard, parse_mode="Markdown")
 
-# ==================== CONVERSATION HANDLERS ====================
+# ==================== COMMAND HANDLERS (Conversation) ====================
 def add_address_entry(update, context):
     query = update.callback_query
     query.answer()
@@ -516,22 +522,22 @@ def stop_button(update, context):
 def help_button(update, context):
     query = update.callback_query
     query.answer()
-    user_id = update.effective_user.id
-    is_admin = user_id in ADMIN_IDS
     text = (
         "📖 *Help Menu*\n\n"
-        "1. Add an address: Use the *Add Address* button\n"
-        "2. Remove an address: Use the *Remove Address* button\n"
-        "3. Check status: Use the *Check Status* button\n"
-        "4. Check health: Use the *Node Health* button\n"
-        "5. Enable auto-updates: Use the *Auto Update* button\n"
-        "6. Stop auto-updates/alerts: Use the *Stop* button\n"
-        "7. Set alerts: Use the *Enable Alerts* button\n"
+        "1. *Add Address*: Gunakan tombol **Add Address** untuk menambahkan alamat dompet.\n"
+        "2. *Remove Address*: Gunakan tombol **Remove Address** untuk menghapus alamat yang telah ditambahkan.\n"
+        "3. *Check Status*: Gunakan tombol **Check Status** untuk mengecek status node, saldo, dan aktivitas terbaru.\n"
+        "4. *Node Health*: Gunakan tombol **Node Health** untuk memeriksa kesehatan node (berdasarkan transaksi 1 jam terakhir).\n"
+        "5. *Node Stats*: Gunakan tombol **Node Stats** untuk melihat statistik node secara mendetail.\n"
+        "6. *Auto Update*: Gunakan tombol **Auto Update** untuk mengaktifkan pembaruan otomatis setiap 5 menit.\n"
+        "7. *Enable Alerts*: Gunakan tombol **Enable Alerts** untuk menerima notifikasi jika tidak ada transaksi selama 15 menit.\n"
+        "8. *Stop*: Gunakan tombol **Stop** untuk menghentikan auto-update dan notifikasi.\n"
+        "9. *Announce* (Admin only): Gunakan tombol **Announce** untuk mengirim pengumuman ke semua chat.\n"
+        "10. *Clear* (Admin only): Gunakan tombol **Clear** untuk menghapus pesan terakhir di chat.\n\n"
+        "💡 *Fun Fact*: Tahukah Anda, setiap transaksi di jaringan blockchain bagaikan denyut nadi digital yang menjaga sistem tetap hidup? "
+        "Pantau node Anda dan jadilah pahlawan dalam dunia digital!\n\n"
+        "🚀 *Happy Monitoring!*"
     )
-    if is_admin:
-        text += "8. Announce a message: Use the *Announce* button\n"
-        text += "9. Clear recent messages: Use the *Clear* button\n"
-    text += "Maximum 5 addresses per chat.\n\nNeed more help? Just ask!"
     query.edit_message_text(text, parse_mode="Markdown")
     show_main_menu(update, context)
 
@@ -561,14 +567,38 @@ def clear_button(update, context):
     query.edit_message_text(f"✅ Cleared {count} messages.", parse_mode="Markdown")
     show_main_menu(update, context)
 
+# ==================== ADDITIONAL COMMAND HANDLERS ====================
+def help_command(update, context):
+    """Handler for /help command with full guide and fun facts."""
+    text = (
+        "📖 *Panduan Lengkap Penggunaan Bot Monitoring Node Cortensor!*\n\n"
+        "Berikut adalah perintah dan fitur yang dapat Anda gunakan:\n\n"
+        "1. *Add Address*: Tambahkan alamat dompet (gunakan tombol *Add Address*).\n"
+        "   - Pastikan alamat yang Anda tambahkan adalah alamat yang valid (42 karakter dimulai dengan '0x').\n\n"
+        "2. *Remove Address*: Hapus alamat yang telah ditambahkan (gunakan tombol *Remove Address*).\n\n"
+        "3. *Check Status*: Cek status node, termasuk saldo dan aktivitas terbaru (gunakan tombol *Check Status*).\n\n"
+        "4. *Node Health*: Periksa kesehatan node berdasarkan transaksi terakhir dalam 1 jam (gunakan tombol *Node Health*).\n\n"
+        "5. *Node Stats*: Lihat statistik node secara mendetail (pilih tombol *Node Stats* dan masukkan alamat).\n\n"
+        "6. *Auto Update*: Aktifkan pembaruan otomatis setiap 5 menit untuk memantau node Anda (gunakan tombol *Auto Update*).\n\n"
+        "7. *Enable Alerts*: Aktifkan notifikasi jika tidak ada transaksi dalam 15 menit (gunakan tombol *Enable Alerts*).\n\n"
+        "8. *Stop*: Hentikan pembaruan otomatis dan notifikasi (gunakan tombol *Stop*).\n\n"
+        "9. *Announce* (Admin only): Kirim pengumuman ke semua chat (gunakan tombol *Announce*).\n\n"
+        "10. *Clear* (Admin only): Hapus pesan terakhir dalam chat (gunakan tombol *Clear*).\n\n"
+        "💡 *Fun Fact*: Tahukah Anda, setiap transaksi di jaringan blockchain bagaikan denyut nadi digital yang menjaga sistem tetap hidup? "
+        "Pantau node Anda dan jadilah pahlawan dalam dunia digital!\n\n"
+        "🚀 *Happy Monitoring!*"
+    )
+    update.message.reply_text(text, parse_mode="Markdown")
+
 # ==================== MAIN FUNCTION ====================
 def main():
     """Run the bot."""
     updater = Updater(TOKEN)
     dp = updater.dispatcher
 
-    # /start command shows the main menu.
+    # /start command shows the main menu with a warm welcome.
     dp.add_handler(CommandHandler("start", show_main_menu))
+    dp.add_handler(CommandHandler("help", help_command))
 
     # Conversation handlers for Add Address, Node Stats, and Announce
     add_conv_handler = ConversationHandler(
