@@ -212,7 +212,7 @@ def help_command(update, context):
         "• Add Address: Add a wallet address.\n"
         "• Remove Address: Remove a wallet address from your list.\n"
         "• Check Status: View node status, balance, and recent activity.\n"
-        "• Node Health: Check node health based on the last hour's transactions.\n"
+        "• Node Health: Check node health based on the last 25 transactions divided into 5 groups.\n"
         "• Auto Update: Enable automatic updates every 5 minutes.\n"
         "• Enable Alerts: Receive notifications if no transactions in 15 minutes.\n"
         "• Stop: Disable auto-updates and alerts.\n"
@@ -333,8 +333,6 @@ def menu_check_status(update, context):
 
 def menu_node_health(update, context):
     chat_id = update.effective_chat.id
-    now = datetime.now(WIB)
-    one_hour_ago = now - timedelta(hours=1)
     addresses = get_addresses_for_chat(chat_id)
     if not addresses:
         update.message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
@@ -343,21 +341,26 @@ def menu_node_health(update, context):
     for addr in addresses[:5]:
         balance = fetch_balance(addr)
         txs = fetch_transactions(addr)
-        recent_txs = [tx for tx in txs if datetime.fromtimestamp(int(tx['timeStamp']), WIB) >= one_hour_ago]
-        if recent_txs:
-            last_tx_time = int(recent_txs[0]['timeStamp'])
+        latest_25 = txs[:25]
+        if latest_25:
+            last_tx_time = int(latest_25[0]['timeStamp'])
             last_activity = get_age(last_tx_time)
-            groups = [recent_txs[i:i+6] for i in range(0, len(recent_txs), 6)]
+            # Bagi 25 transaksi terakhir menjadi 5 grup (masing-masing 5 transaksi)
+            groups = [latest_25[i*5:(i+1)*5] for i in range(5)]
             group_statuses = []
             for group in groups:
-                if any(tx.get('isError') != '0' for tx in group):
-                    group_statuses.append("🟥")
+                if group:
+                    # Jika ada minimal 1 transaksi error, tampilkan kotak merah, jika tidak, kotak hijau
+                    if any(tx.get('isError') != '0' for tx in group):
+                        group_statuses.append("🟥")
+                    else:
+                        group_statuses.append("🟩")
                 else:
-                    group_statuses.append("🟩")
+                    group_statuses.append("⬜")
             health_status = " ".join(group_statuses)
         else:
             last_activity = "N/A"
-            health_status = "No transactions in the last hour"
+            health_status = "No transactions found"
         responses.append(
             f"🔹 {shorten_address(addr)}\n"
             f"💵 Balance: {balance:.4f} ETH\n"
@@ -366,7 +369,9 @@ def menu_node_health(update, context):
             f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | "
             f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
         )
+    explanation_text = "🩺 Health Explanation: Each square represents the status of 5 transactions among the last 25 transactions."
     update.message.reply_text("🩺 Node Health\n\n" + "\n\n".join(responses) +
+                              "\n\n" + explanation_text +
                               f"\n\n⏰ Last update: {format_time(get_wib_time())}",
                               parse_mode="Markdown", reply_markup=main_menu_keyboard(update.effective_user.id))
 
