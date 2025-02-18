@@ -232,14 +232,14 @@ def get_main_menu_keyboard(is_admin: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 def show_main_menu(update, context):
+    """Display the main menu with welcome text."""
     is_admin = update.effective_user.id in ADMIN_IDS
     keyboard = get_main_menu_keyboard(is_admin)
     welcome_text = (
         "👋 Welcome to *Cortensor Node Monitoring Bot!* \n\n"
         "I am here to help you monitor your node status easily and efficiently. "
-        "Choose an option below to get started, and feel free to explore all available features!\n\n"
-        "💡 *Tip*: Use the Auto Update feature to receive updates every 5 minutes.\n\n"
-        "Enjoy your monitoring experience! 🚀"
+        "Choose an option below to get started.\n\n"
+        "💡 Tip: Use the Auto Update feature to receive updates every 5 minutes."
     )
     if update.callback_query:
         update.callback_query.edit_message_text(
@@ -285,8 +285,7 @@ def remove_address_entry(update, context):
     chat_id = update.effective_chat.id
     addresses = get_addresses_for_chat(chat_id)
     if not addresses:
-        query.edit_message_text("ℹ️ No addresses found to remove.")
-        show_main_menu(update, context)
+        query.edit_message_text("ℹ️ No addresses found to remove.", parse_mode="Markdown")
         return
     keyboard = []
     for addr in addresses:
@@ -299,26 +298,24 @@ def remove_address_selection(update, context):
     query.answer()
     data = query.data
     if data == "cancel_remove":
-        show_main_menu(update, context)
+        # Hapus inline keyboard dan beri notifikasi cancel tanpa memunculkan main menu
+        query.edit_message_text(text="Operation cancelled.", parse_mode="Markdown")
         return
     address = data.replace("remove_", "")
     chat_id = update.effective_chat.id
     addresses = get_addresses_for_chat(chat_id)
     if address not in addresses:
-        query.edit_message_text("❌ Address not found.")
-        show_main_menu(update, context)
+        query.edit_message_text("❌ Address not found.", parse_mode="Markdown")
         return
     addresses.remove(address)
     update_addresses_for_chat(chat_id, addresses)
     query.edit_message_text(f"✅ Removed `{shorten_address(address)}` from your list!", parse_mode="Markdown")
-    show_main_menu(update, context)
 
 def announce_entry(update, context):
     query = update.callback_query
     query.answer()
     if update.effective_user.id not in ADMIN_IDS:
-        query.edit_message_text("❌ You are not authorized to use this command.")
-        show_main_menu(update, context)
+        query.edit_message_text("❌ You are not authorized to use this command.", parse_mode="Markdown")
         return ConversationHandler.END
     query.edit_message_text("Please send the announcement message:")
     return ANNOUNCE
@@ -353,8 +350,7 @@ def ping_button(update, context):
     chat_id = query.message.chat_id
     addresses = get_addresses_for_chat(chat_id)
     if not addresses:
-        query.edit_message_text("ℹ️ No addresses found! Please add one using the Add Address button.")
-        show_main_menu(update, context)
+        query.edit_message_text("ℹ️ No addresses found! Please add one using the Add Address button.", parse_mode="Markdown")
         return
     responses = []
     for addr in addresses[:5]:
@@ -382,7 +378,6 @@ def ping_button(update, context):
         parse_mode="Markdown",
         disable_web_page_preview=True
     )
-    show_main_menu(update, context)
 
 def health_button(update, context):
     query = update.callback_query
@@ -392,8 +387,7 @@ def health_button(update, context):
     one_hour_ago = now - timedelta(hours=1)
     addresses = get_addresses_for_chat(chat_id)
     if not addresses:
-        query.edit_message_text("ℹ️ No addresses found! Please add one using the Add Address button.")
-        show_main_menu(update, context)
+        query.edit_message_text("ℹ️ No addresses found! Please add one using the Add Address button.", parse_mode="Markdown")
         return
     responses = []
     for addr in addresses[:5]:
@@ -428,20 +422,17 @@ def health_button(update, context):
         parse_mode="Markdown",
         disable_web_page_preview=True
     )
-    show_main_menu(update, context)
 
 def auto_button(update, context):
     query = update.callback_query
     query.answer()
     chat_id = query.message.chat_id
     if not get_addresses_for_chat(chat_id):
-        query.edit_message_text("ℹ️ No addresses found! Please add one using the Add Address button.")
-        show_main_menu(update, context)
+        query.edit_message_text("ℹ️ No addresses found! Please add one using the Add Address button.", parse_mode="Markdown")
         return
     current_jobs = context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}")
     if current_jobs:
-        query.edit_message_text("ℹ️ Auto-update is already active!")
-        show_main_menu(update, context)
+        query.edit_message_text("ℹ️ Auto-update is already active!", parse_mode="Markdown")
         return
     context.job_queue.run_repeating(
         auto_update,
@@ -450,20 +441,17 @@ def auto_button(update, context):
         name=f"auto_update_{chat_id}"
     )
     query.edit_message_text("✅ *Auto-updates enabled!*\n\nI will send updates every 5 minutes with the latest data.", parse_mode="Markdown")
-    show_main_menu(update, context)
 
 def alert_button(update, context):
     query = update.callback_query
     query.answer()
     chat_id = query.message.chat_id
     if not get_addresses_for_chat(chat_id):
-        query.edit_message_text("ℹ️ No addresses found! Please add one using the Add Address button.")
-        show_main_menu(update, context)
+        query.edit_message_text("ℹ️ No addresses found! Please add one using the Add Address button.", parse_mode="Markdown")
         return
     current_jobs = context.job_queue.get_jobs_by_name(f"alert_{chat_id}")
     if current_jobs:
-        query.edit_message_text("ℹ️ Alerts are already active!")
-        show_main_menu(update, context)
+        query.edit_message_text("ℹ️ Alerts are already active!", parse_mode="Markdown")
         return
     context.job_queue.run_repeating(
         alert_check,
@@ -472,7 +460,6 @@ def alert_button(update, context):
         name=f"alert_{chat_id}"
     )
     query.edit_message_text("✅ *Alerts enabled!*\n\nI will notify you if there are no transactions in the last 15 minutes.", parse_mode="Markdown")
-    show_main_menu(update, context)
 
 def stop_button(update, context):
     query = update.callback_query
@@ -487,8 +474,7 @@ def stop_button(update, context):
     if removed_jobs:
         query.edit_message_text("✅ *Auto-update and alerts have been stopped!*", parse_mode="Markdown")
     else:
-        query.edit_message_text("ℹ️ No active jobs found.")
-    show_main_menu(update, context)
+        query.edit_message_text("ℹ️ No active jobs found.", parse_mode="Markdown")
 
 def help_button(update, context):
     query = update.callback_query
@@ -503,11 +489,10 @@ def help_button(update, context):
         "6. *Enable Alerts*: Use the **Enable Alerts** button to receive notifications if there are no transactions for 15 minutes.\n"
         "7. *Stop*: Use the **Stop** button to disable auto-updates and alerts.\n"
         "8. *Announce* (Admin only): Use the **Announce** button to send a message to all chats.\n\n"
-        "💡 *Fun Fact*: Every blockchain transaction is like a digital heartbeat that keeps the system alive. Monitor your node and be a digital hero!\n\n"
-        "🚀 *Happy Monitoring!*"
+        "💡 Fun Fact: Every blockchain transaction is like a digital heartbeat that keeps the system alive. Monitor your node and be a digital hero!\n\n"
+        "🚀 Happy Monitoring!"
     )
     query.edit_message_text(text, parse_mode="Markdown")
-    show_main_menu(update, context)
 
 # ==================== ADDITIONAL COMMAND HANDLERS ====================
 def help_command(update, context):
@@ -524,8 +509,8 @@ def help_command(update, context):
         "6. *Enable Alerts*: Receive notifications if there are no transactions in the last 15 minutes using the **Enable Alerts** button.\n\n"
         "7. *Stop*: Disable auto-updates and alerts using the **Stop** button.\n\n"
         "8. *Announce* (Admin only): Send an announcement to all chats using the **Announce** button.\n\n"
-        "💡 *Fun Fact*: Every blockchain transaction is like a digital heartbeat that keeps the system alive. Monitor your node and be a digital hero!\n\n"
-        "🚀 *Happy Monitoring!*"
+        "💡 Fun Fact: Every blockchain transaction is like a digital heartbeat that keeps the system alive. Monitor your node and be a digital hero!\n\n"
+        "🚀 Happy Monitoring!"
     )
     update.message.reply_text(text, parse_mode="Markdown")
 
