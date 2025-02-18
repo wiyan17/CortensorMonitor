@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Cortensor Node Monitoring Bot (PTB v13.5 Compatible) – Button Version
+# Cortensor Node Monitoring Bot (PTB v13.5 Compatible) – Button Version (English)
 
 import logging
 import requests
@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 WIB = timezone(timedelta(hours=7))
 
 # ==================== CONVERSATION STATES ====================
-ADD_ADDRESS, NODESTATS_ADDRESS, ANNOUNCE = range(1, 4)
+ADD_ADDRESS, ANNOUNCE = range(1, 3)
 
 # ==================== DATA STORAGE FUNCTIONS ====================
 def load_data() -> dict:
@@ -222,26 +222,24 @@ def get_main_menu_keyboard(is_admin: bool) -> InlineKeyboardMarkup:
          InlineKeyboardButton("Remove Address", callback_data="remove_address")],
         [InlineKeyboardButton("Check Status", callback_data="ping"),
          InlineKeyboardButton("Node Health", callback_data="health")],
-        [InlineKeyboardButton("Node Stats", callback_data="nodestats_prompt")],
         [InlineKeyboardButton("Auto Update", callback_data="auto"),
          InlineKeyboardButton("Enable Alerts", callback_data="alert")],
         [InlineKeyboardButton("Stop", callback_data="stop"),
          InlineKeyboardButton("Help", callback_data="help")]
     ]
     if is_admin:
-        keyboard.append([InlineKeyboardButton("Announce", callback_data="announce"),
-                         InlineKeyboardButton("Clear", callback_data="clear")])
+        keyboard.append([InlineKeyboardButton("Announce", callback_data="announce")])
     return InlineKeyboardMarkup(keyboard)
 
 def show_main_menu(update, context):
     is_admin = update.effective_user.id in ADMIN_IDS
     keyboard = get_main_menu_keyboard(is_admin)
     welcome_text = (
-        "👋 Selamat datang di *Cortensor Node Monitoring Bot!* \n\n"
-        "Saya di sini untuk membantu Anda memantau status node dengan mudah dan menyenangkan. "
-        "Pilih opsi di bawah untuk memulai, dan jangan ragu untuk mengeksplorasi semua fitur yang tersedia!\n\n"
-        "💡 *Tip*: Gunakan fitur auto-update untuk mendapatkan pembaruan otomatis setiap 5 menit.\n\n"
-        "Semoga Anda menikmati pengalaman menggunakan bot ini! 🚀"
+        "👋 Welcome to *Cortensor Node Monitoring Bot!* \n\n"
+        "I am here to help you monitor your node status easily and efficiently. "
+        "Choose an option below to get started, and feel free to explore all available features!\n\n"
+        "💡 *Tip*: Use the Auto Update feature to receive updates every 5 minutes.\n\n"
+        "Enjoy your monitoring experience! 🚀"
     )
     if update.callback_query:
         update.callback_query.edit_message_text(
@@ -253,7 +251,7 @@ def show_main_menu(update, context):
     else:
         update.message.reply_text(text=welcome_text, reply_markup=keyboard, parse_mode="Markdown")
 
-# ==================== COMMAND HANDLERS (Conversation) ====================
+# ==================== CONVERSATION HANDLERS ====================
 def add_address_entry(update, context):
     query = update.callback_query
     query.answer()
@@ -281,66 +279,6 @@ def add_address_receive(update, context):
     show_main_menu(update, context)
     return ConversationHandler.END
 
-def nodestats_prompt(update, context):
-    query = update.callback_query
-    query.answer()
-    query.edit_message_text(text="Please send me the wallet address to view node stats:", parse_mode="Markdown")
-    return NODESTATS_ADDRESS
-
-def nodestats_receive(update, context):
-    address = update.message.text.strip().lower()
-    stats = fetch_node_stats(address)
-    if not stats:
-        update.message.reply_text("❌ No data found for this address!")
-    else:
-        update.message.reply_text(
-            f"📈 *Node Stats for {shorten_address(address)}*\n\n"
-            f"• Uptime: `{stats.get('uptime', 'N/A')}`\n"
-            f"• Total TXs: `{stats.get('total_tx', 0)}`\n"
-            f"• Last activity: `{get_age(stats.get('last_tx', 0))}`\n\n"
-            f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{address}) | "
-            f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{address})\n\n"
-            f"⏰ *Last update:* {format_time(get_wib_time())}",
-            parse_mode="Markdown",
-            disable_web_page_preview=True
-        )
-    show_main_menu(update, context)
-    return ConversationHandler.END
-
-def announce_entry(update, context):
-    query = update.callback_query
-    query.answer()
-    if update.effective_user.id not in ADMIN_IDS:
-        query.edit_message_text("❌ You are not authorized to use this command.")
-        show_main_menu(update, context)
-        return ConversationHandler.END
-    query.edit_message_text("Please send the announcement message:")
-    return ANNOUNCE
-
-def announce_receive(update, context):
-    message = update.message.text
-    data = load_data()
-    if not data:
-        update.message.reply_text("No chats found to announce to.")
-        show_main_menu(update, context)
-        return ConversationHandler.END
-    count = 0
-    for chat in data.keys():
-        try:
-            context.bot.send_message(chat_id=int(chat), text=message)
-            count += 1
-        except Exception as e:
-            logger.error(f"Error sending announcement to chat {chat}: {e}")
-    update.message.reply_text(f"Announcement sent to {count} chats.", parse_mode="Markdown")
-    show_main_menu(update, context)
-    return ConversationHandler.END
-
-def cancel(update, context):
-    update.message.reply_text("Operation cancelled.")
-    show_main_menu(update, context)
-    return ConversationHandler.END
-
-# ==================== REMOVE ADDRESS (Inline) ====================
 def remove_address_entry(update, context):
     query = update.callback_query
     query.answer()
@@ -374,6 +312,39 @@ def remove_address_selection(update, context):
     update_addresses_for_chat(chat_id, addresses)
     query.edit_message_text(f"✅ Removed `{shorten_address(address)}` from your list!", parse_mode="Markdown")
     show_main_menu(update, context)
+
+def announce_entry(update, context):
+    query = update.callback_query
+    query.answer()
+    if update.effective_user.id not in ADMIN_IDS:
+        query.edit_message_text("❌ You are not authorized to use this command.")
+        show_main_menu(update, context)
+        return ConversationHandler.END
+    query.edit_message_text("Please send the announcement message:")
+    return ANNOUNCE
+
+def announce_receive(update, context):
+    message = update.message.text
+    data = load_data()
+    if not data:
+        update.message.reply_text("No chats found to announce to.")
+        show_main_menu(update, context)
+        return ConversationHandler.END
+    count = 0
+    for chat in data.keys():
+        try:
+            context.bot.send_message(chat_id=int(chat), text=message)
+            count += 1
+        except Exception as e:
+            logger.error(f"Error sending announcement to chat {chat}: {e}")
+    update.message.reply_text(f"Announcement sent to {count} chats.", parse_mode="Markdown")
+    show_main_menu(update, context)
+    return ConversationHandler.END
+
+def cancel(update, context):
+    update.message.reply_text("Operation cancelled.")
+    show_main_menu(update, context)
+    return ConversationHandler.END
 
 # ==================== BUTTON CALLBACK HANDLERS ====================
 def ping_button(update, context):
@@ -524,68 +495,36 @@ def help_button(update, context):
     query.answer()
     text = (
         "📖 *Help Menu*\n\n"
-        "1. *Add Address*: Gunakan tombol **Add Address** untuk menambahkan alamat dompet.\n"
-        "2. *Remove Address*: Gunakan tombol **Remove Address** untuk menghapus alamat yang telah ditambahkan.\n"
-        "3. *Check Status*: Gunakan tombol **Check Status** untuk mengecek status node, saldo, dan aktivitas terbaru.\n"
-        "4. *Node Health*: Gunakan tombol **Node Health** untuk memeriksa kesehatan node (berdasarkan transaksi 1 jam terakhir).\n"
-        "5. *Node Stats*: Gunakan tombol **Node Stats** untuk melihat statistik node secara mendetail.\n"
-        "6. *Auto Update*: Gunakan tombol **Auto Update** untuk mengaktifkan pembaruan otomatis setiap 5 menit.\n"
-        "7. *Enable Alerts*: Gunakan tombol **Enable Alerts** untuk menerima notifikasi jika tidak ada transaksi selama 15 menit.\n"
-        "8. *Stop*: Gunakan tombol **Stop** untuk menghentikan auto-update dan notifikasi.\n"
-        "9. *Announce* (Admin only): Gunakan tombol **Announce** untuk mengirim pengumuman ke semua chat.\n"
-        "10. *Clear* (Admin only): Gunakan tombol **Clear** untuk menghapus pesan terakhir di chat.\n\n"
-        "💡 *Fun Fact*: Tahukah Anda, setiap transaksi di jaringan blockchain bagaikan denyut nadi digital yang menjaga sistem tetap hidup? "
-        "Pantau node Anda dan jadilah pahlawan dalam dunia digital!\n\n"
+        "1. *Add Address*: Use the **Add Address** button to add a wallet address.\n"
+        "2. *Remove Address*: Use the **Remove Address** button to remove an address from your list.\n"
+        "3. *Check Status*: Use the **Check Status** button to view node status, balance, and recent activity.\n"
+        "4. *Node Health*: Use the **Node Health** button to check node health based on the last hour's transactions.\n"
+        "5. *Auto Update*: Use the **Auto Update** button to enable automatic updates every 5 minutes.\n"
+        "6. *Enable Alerts*: Use the **Enable Alerts** button to receive notifications if there are no transactions for 15 minutes.\n"
+        "7. *Stop*: Use the **Stop** button to disable auto-updates and alerts.\n"
+        "8. *Announce* (Admin only): Use the **Announce** button to send a message to all chats.\n\n"
+        "💡 *Fun Fact*: Every blockchain transaction is like a digital heartbeat that keeps the system alive. Monitor your node and be a digital hero!\n\n"
         "🚀 *Happy Monitoring!*"
     )
     query.edit_message_text(text, parse_mode="Markdown")
-    show_main_menu(update, context)
-
-def clear_button(update, context):
-    query = update.callback_query
-    query.answer()
-    chat_id = query.message.chat_id
-    user_id = update.effective_user.id
-    try:
-        admins = [admin.user.id for admin in context.bot.get_chat_administrators(chat_id)]
-    except Exception as e:
-        query.edit_message_text("⚠️ Unable to check admin status.")
-        show_main_menu(update, context)
-        return
-    if user_id not in admins:
-        query.edit_message_text("❌ You must be an admin to use this command!")
-        show_main_menu(update, context)
-        return
-    last_msg_id = query.message.message_id
-    count = 0
-    for msg_id in range(last_msg_id - 50, last_msg_id + 1):
-        try:
-            context.bot.delete_message(chat_id, msg_id)
-            count += 1
-        except Exception as e:
-            continue
-    query.edit_message_text(f"✅ Cleared {count} messages.", parse_mode="Markdown")
     show_main_menu(update, context)
 
 # ==================== ADDITIONAL COMMAND HANDLERS ====================
 def help_command(update, context):
     """Handler for /help command with full guide and fun facts."""
     text = (
-        "📖 *Panduan Lengkap Penggunaan Bot Monitoring Node Cortensor!*\n\n"
-        "Berikut adalah perintah dan fitur yang dapat Anda gunakan:\n\n"
-        "1. *Add Address*: Tambahkan alamat dompet (gunakan tombol *Add Address*).\n"
-        "   - Pastikan alamat yang Anda tambahkan adalah alamat yang valid (42 karakter dimulai dengan '0x').\n\n"
-        "2. *Remove Address*: Hapus alamat yang telah ditambahkan (gunakan tombol *Remove Address*).\n\n"
-        "3. *Check Status*: Cek status node, termasuk saldo dan aktivitas terbaru (gunakan tombol *Check Status*).\n\n"
-        "4. *Node Health*: Periksa kesehatan node berdasarkan transaksi terakhir dalam 1 jam (gunakan tombol *Node Health*).\n\n"
-        "5. *Node Stats*: Lihat statistik node secara mendetail (pilih tombol *Node Stats* dan masukkan alamat).\n\n"
-        "6. *Auto Update*: Aktifkan pembaruan otomatis setiap 5 menit untuk memantau node Anda (gunakan tombol *Auto Update*).\n\n"
-        "7. *Enable Alerts*: Aktifkan notifikasi jika tidak ada transaksi dalam 15 menit (gunakan tombol *Enable Alerts*).\n\n"
-        "8. *Stop*: Hentikan pembaruan otomatis dan notifikasi (gunakan tombol *Stop*).\n\n"
-        "9. *Announce* (Admin only): Kirim pengumuman ke semua chat (gunakan tombol *Announce*).\n\n"
-        "10. *Clear* (Admin only): Hapus pesan terakhir dalam chat (gunakan tombol *Clear*).\n\n"
-        "💡 *Fun Fact*: Tahukah Anda, setiap transaksi di jaringan blockchain bagaikan denyut nadi digital yang menjaga sistem tetap hidup? "
-        "Pantau node Anda dan jadilah pahlawan dalam dunia digital!\n\n"
+        "📖 *Complete Guide for Cortensor Node Monitoring Bot!*\n\n"
+        "Below are the available commands and features:\n\n"
+        "1. *Add Address*: Add a wallet address using the **Add Address** button.\n"
+        "   - Ensure the address is valid (42 characters starting with '0x').\n\n"
+        "2. *Remove Address*: Remove an address from your list using the **Remove Address** button.\n\n"
+        "3. *Check Status*: View node status, including balance and recent activity using the **Check Status** button.\n\n"
+        "4. *Node Health*: Check the health of your node based on transactions in the last hour using the **Node Health** button.\n\n"
+        "5. *Auto Update*: Enable automatic updates every 5 minutes using the **Auto Update** button.\n\n"
+        "6. *Enable Alerts*: Receive notifications if there are no transactions in the last 15 minutes using the **Enable Alerts** button.\n\n"
+        "7. *Stop*: Disable auto-updates and alerts using the **Stop** button.\n\n"
+        "8. *Announce* (Admin only): Send an announcement to all chats using the **Announce** button.\n\n"
+        "💡 *Fun Fact*: Every blockchain transaction is like a digital heartbeat that keeps the system alive. Monitor your node and be a digital hero!\n\n"
         "🚀 *Happy Monitoring!*"
     )
     update.message.reply_text(text, parse_mode="Markdown")
@@ -596,11 +535,14 @@ def main():
     updater = Updater(TOKEN)
     dp = updater.dispatcher
 
+    # Log when the bot is starting
+    logger.info("Bot is starting...")
+
     # /start command shows the main menu with a warm welcome.
     dp.add_handler(CommandHandler("start", show_main_menu))
     dp.add_handler(CommandHandler("help", help_command))
 
-    # Conversation handlers for Add Address, Node Stats, and Announce
+    # Conversation handlers for Add Address and Announce
     add_conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(add_address_entry, pattern="^add_address$")],
         states={
@@ -609,15 +551,6 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(add_conv_handler)
-
-    nodestats_conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(nodestats_prompt, pattern="^nodestats_prompt$")],
-        states={
-            NODESTATS_ADDRESS: [MessageHandler(Filters.text & ~Filters.command, nodestats_receive)]
-        },
-        fallbacks=[CommandHandler("cancel", cancel)]
-    )
-    dp.add_handler(nodestats_conv_handler)
 
     announce_conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(announce_entry, pattern="^announce$")],
@@ -639,9 +572,9 @@ def main():
     dp.add_handler(CallbackQueryHandler(alert_button, pattern="^alert$"))
     dp.add_handler(CallbackQueryHandler(stop_button, pattern="^stop$"))
     dp.add_handler(CallbackQueryHandler(help_button, pattern="^help$"))
-    dp.add_handler(CallbackQueryHandler(clear_button, pattern="^clear$"))
 
     updater.start_polling()
+    logger.info("Bot is running...")
     updater.idle()
 
 if __name__ == "__main__":
