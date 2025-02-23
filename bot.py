@@ -5,6 +5,7 @@ import logging
 import requests
 import json
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
@@ -98,6 +99,8 @@ def fetch_balance(address: str) -> float:
             "apikey": API_KEY
         }
         response = requests.get("https://api-sepolia.arbiscan.io/api", params=params, timeout=10)
+        # Jeda agar tidak melebihi limit
+        time.sleep(2)
         return int(response.json()['result']) / 10**18
     except Exception as e:
         logger.error(f"Balance error: {e}")
@@ -115,8 +118,10 @@ def fetch_transactions(address: str) -> list:
             "apikey": API_KEY
         }
         response = requests.get("https://api-sepolia.arbiscan.io/api", params=params, timeout=10)
+        # Jeda agar tidak melebihi limit
+        time.sleep(2)
         result = response.json().get('result', [])
-        # Pastikan result adalah list of dictionaries
+        # Pastikan result berupa list of dictionaries
         if isinstance(result, list) and result and isinstance(result[0], dict):
             return result
         else:
@@ -347,16 +352,15 @@ def menu_node_health(update, context):
     for addr in addresses[:10]:
         balance = fetch_balance(addr)
         txs = fetch_transactions(addr)
-        latest_25 = txs[:25]
-        if latest_25:
-            last_tx_time = int(latest_25[0]['timeStamp'])
+        if txs:
+            last_tx_time = int(txs[0]['timeStamp'])
             last_activity = get_age(last_tx_time)
             # Bagi 25 transaksi terakhir menjadi 5 grup (masing-masing 5 transaksi)
+            latest_25 = txs[:25]
             groups = [latest_25[i*5:(i+1)*5] for i in range(5)]
             group_statuses = []
             for group in groups:
                 if group:
-                    # Jika ada minimal 1 transaksi error, tampilkan kotak merah, jika tidak, kotak hijau
                     if any(tx.get('isError') != '0' for tx in group):
                         group_statuses.append("🟥")
                     else:
