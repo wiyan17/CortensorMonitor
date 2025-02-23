@@ -115,7 +115,13 @@ def fetch_transactions(address: str) -> list:
             "apikey": API_KEY
         }
         response = requests.get("https://api-sepolia.arbiscan.io/api", params=params, timeout=10)
-        return response.json().get('result', [])
+        result = response.json().get('result', [])
+        # Pastikan result adalah list of dictionaries
+        if isinstance(result, list) and result and isinstance(result[0], dict):
+            return result
+        else:
+            logger.error(f"Unexpected transactions format for address {address}: {result}")
+            return []
     except Exception as e:
         logger.error(f"Tx error: {e}")
         return []
