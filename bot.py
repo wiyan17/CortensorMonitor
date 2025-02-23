@@ -99,8 +99,8 @@ def fetch_balance(address: str) -> float:
             "apikey": API_KEY
         }
         response = requests.get("https://api-sepolia.arbiscan.io/api", params=params, timeout=10)
-        # Jeda agar tidak melebihi limit
-        time.sleep(2)
+        # Delay 0.2 detik agar total API call mencapai 5 per detik
+        time.sleep(0.2)
         return int(response.json()['result']) / 10**18
     except Exception as e:
         logger.error(f"Balance error: {e}")
@@ -118,8 +118,8 @@ def fetch_transactions(address: str) -> list:
             "apikey": API_KEY
         }
         response = requests.get("https://api-sepolia.arbiscan.io/api", params=params, timeout=10)
-        # Jeda agar tidak melebihi limit
-        time.sleep(2)
+        # Delay 0.2 detik agar total API call mencapai 5 per detik
+        time.sleep(0.2)
         result = response.json().get('result', [])
         # Pastikan result berupa list of dictionaries
         if isinstance(result, list) and result and isinstance(result[0], dict):
