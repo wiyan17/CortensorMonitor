@@ -77,8 +77,8 @@ def shorten_address(address: str) -> str:
 def get_wib_time() -> datetime:
     return datetime.now(WIB)
 
-def format_time(time: datetime) -> str:
-    return time.strftime('%Y-%m-%d %H:%M:%S WIB')
+def format_time(time_obj: datetime) -> str:
+    return time_obj.strftime('%Y-%m-%d %H:%M:%S WIB')
 
 def get_age(timestamp: int) -> str:
     diff = datetime.now(WIB) - datetime.fromtimestamp(timestamp, WIB)
@@ -88,8 +88,23 @@ def get_age(timestamp: int) -> str:
     minutes = seconds // 60
     return f"{minutes} mins ago" if minutes < 60 else f"{minutes//60} hours ago"
 
-# ==================== API FUNCTIONS ====================
-def fetch_balance(address: str) -> float:
+# ==================== DYNAMIC RATE LIMIT HELPER ====================
+def get_dynamic_delay(num_addresses: int) -> float:
+    """
+    Menghitung delay dinamis per panggilan API agar total API call
+    tidak melebihi 5 per detik.
+    Asumsi: setiap address memerlukan 2 panggilan API (balance & txlist).
+    Jika 2 * num_addresses <= 5, delay bisa 0.
+    Jika lebih, delay = (total_calls / 5) / (total_calls - 1)
+    """
+    total_calls = 2 * num_addresses
+    if total_calls <= 5:
+        return 0.0
+    required_total_time = total_calls / 5.0  # dalam detik
+    intervals = total_calls - 1  # jeda antar panggilan
+    return required_total_time / intervals
+
+def safe_fetch_balance(address: str, delay: float) -> float:
     try:
         params = {
             "module": "account",
@@ -99,14 +114,14 @@ def fetch_balance(address: str) -> float:
             "apikey": API_KEY
         }
         response = requests.get("https://api-sepolia.arbiscan.io/api", params=params, timeout=10)
-        # Delay 0.2 detik agar total API call mencapai 5 per detik
-        time.sleep(0.2)
-        return int(response.json()['result']) / 10**18
+        result = int(response.json()['result']) / 10**18
     except Exception as e:
-        logger.error(f"Balance error: {e}")
-        return 0.0
+        logger.error(f"Balance error for {address}: {e}")
+        result = 0.0
+    time.sleep(delay)
+    return result
 
-def fetch_transactions(address: str) -> list:
+def safe_fetch_transactions(address: str, delay: float) -> list:
     try:
         params = {
             "module": "account",
@@ -118,26 +133,26 @@ def fetch_transactions(address: str) -> list:
             "apikey": API_KEY
         }
         response = requests.get("https://api-sepolia.arbiscan.io/api", params=params, timeout=10)
-        # Delay 0.2 detik agar total API call mencapai 5 per detik
-        time.sleep(0.2)
         result = response.json().get('result', [])
-        # Pastikan result berupa list of dictionaries
         if isinstance(result, list) and result and isinstance(result[0], dict):
-            return result
+            tx_list = result
         else:
             logger.error(f"Unexpected transactions format for address {address}: {result}")
-            return []
+            tx_list = []
     except Exception as e:
-        logger.error(f"Tx error: {e}")
-        return []
+        logger.error(f"Tx error for {address}: {e}")
+        tx_list = []
+    time.sleep(delay)
+    return tx_list
 
+# ==================== API FUNCTIONS (tanpa delay internal) ====================
 def fetch_node_stats(address: str) -> dict:
     try:
         url = f"{CORTENSOR_API}/nodestats/{address}"
         response = requests.get(url, timeout=15)
         return response.json()
     except Exception as e:
-        logger.error(f"Node stats error: {e}")
+        logger.error(f"Node stats error for {address}: {e}")
         return {}
 
 # ==================== JOB FUNCTIONS ====================
@@ -148,10 +163,14 @@ def auto_update(context: CallbackContext):
     if not addresses:
         context.bot.send_message(chat_id=chat_id, text="ℹ️ No addresses found! Please use 'Add Address'.")
         return
+
+    # Hitung delay dinamis berdasarkan jumlah address
+    dynamic_delay = get_dynamic_delay(len(addresses))
+
     responses = []
     for addr in addresses:
-        balance = fetch_balance(addr)
-        txs = fetch_transactions(addr)[:6]
+        balance = safe_fetch_balance(addr, dynamic_delay)
+        txs = safe_fetch_transactions(addr, dynamic_delay)[:6]
         if txs:
             last_tx_time = int(txs[0]['timeStamp'])
             time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
@@ -179,8 +198,10 @@ def alert_check(context: CallbackContext):
     job = context.job
     chat_id = job.context['chat_id']
     addresses = get_addresses_for_chat(chat_id)[:10]
+    # Hitung delay dinamis
+    dynamic_delay = get_dynamic_delay(len(addresses))
     for addr in addresses:
-        txs = fetch_transactions(addr)
+        txs = safe_fetch_transactions(addr, dynamic_delay)
         if txs:
             last_tx_time = int(txs[0]['timeStamp'])
             time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
@@ -265,7 +286,6 @@ def remove_address_start(update, context):
     if not addresses:
         update.message.reply_text("No addresses found to remove.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return ConversationHandler.END
-    # Build keyboard with each address as an option
     keyboard = [[addr] for addr in addresses]
     keyboard.append(["Cancel"])
     update.message.reply_text("Select the address to remove:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True))
@@ -318,10 +338,11 @@ def menu_check_status(update, context):
     if not addresses:
         update.message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
+    dynamic_delay = get_dynamic_delay(len(addresses))
     responses = []
     for addr in addresses[:10]:
-        balance = fetch_balance(addr)
-        txs = fetch_transactions(addr)[:6]
+        balance = safe_fetch_balance(addr, dynamic_delay)
+        txs = safe_fetch_transactions(addr, dynamic_delay)[:6]
         if txs:
             last_tx_time = int(txs[0]['timeStamp'])
             time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
@@ -348,14 +369,14 @@ def menu_node_health(update, context):
     if not addresses:
         update.message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
+    dynamic_delay = get_dynamic_delay(len(addresses))
     responses = []
     for addr in addresses[:10]:
-        balance = fetch_balance(addr)
-        txs = fetch_transactions(addr)
+        balance = safe_fetch_balance(addr, dynamic_delay)
+        txs = safe_fetch_transactions(addr, dynamic_delay)
         if txs:
             last_tx_time = int(txs[0]['timeStamp'])
             last_activity = get_age(last_tx_time)
-            # Bagi 25 transaksi terakhir menjadi 5 grup (masing-masing 5 transaksi)
             latest_25 = txs[:25]
             groups = [latest_25[i*5:(i+1)*5] for i in range(5)]
             group_statuses = []
