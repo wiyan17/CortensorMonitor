@@ -133,7 +133,7 @@ def fetch_node_stats(address: str) -> dict:
 def auto_update(context: CallbackContext):
     job = context.job
     chat_id = job.context['chat_id']
-    addresses = get_addresses_for_chat(chat_id)[:5]
+    addresses = get_addresses_for_chat(chat_id)[:10]
     if not addresses:
         context.bot.send_message(chat_id=chat_id, text="ℹ️ No addresses found! Please use 'Add Address'.")
         return
@@ -167,7 +167,7 @@ def auto_update(context: CallbackContext):
 def alert_check(context: CallbackContext):
     job = context.job
     chat_id = job.context['chat_id']
-    addresses = get_addresses_for_chat(chat_id)[:5]
+    addresses = get_addresses_for_chat(chat_id)[:10]
     for addr in addresses:
         txs = fetch_transactions(addr)
         if txs:
@@ -238,8 +238,8 @@ def add_address_receive(update, context):
         update.message.reply_text("⚠️ Address already added!")
         update.message.reply_text("Returning to main menu.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return ConversationHandler.END
-    if len(addresses) >= 5:
-        update.message.reply_text("❌ Maximum 5 addresses per chat!")
+    if len(addresses) >= 10:
+        update.message.reply_text("❌ Maximum 10 addresses per chat!")
         update.message.reply_text("Returning to main menu.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return ConversationHandler.END
     addresses.append(address)
@@ -308,7 +308,7 @@ def menu_check_status(update, context):
         update.message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
     responses = []
-    for addr in addresses[:5]:
+    for addr in addresses[:10]:
         balance = fetch_balance(addr)
         txs = fetch_transactions(addr)[:6]
         if txs:
@@ -338,7 +338,7 @@ def menu_node_health(update, context):
         update.message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
     responses = []
-    for addr in addresses[:5]:
+    for addr in addresses[:10]:
         balance = fetch_balance(addr)
         txs = fetch_transactions(addr)
         latest_25 = txs[:25]
