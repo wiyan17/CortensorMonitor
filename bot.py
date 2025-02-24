@@ -235,41 +235,6 @@ def auto_node_stall(context: CallbackContext):
                     parse_mode="Markdown"
                 )
 
-# ==================== COMMAND UNTUK CEK NODE STALL (Manual) ====================
-def menu_node_stall(update, context):
-    chat_id = update.effective_chat.id
-    addresses = get_addresses_for_chat(chat_id)
-    if not addresses:
-        update.message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    dynamic_delay = get_dynamic_delay(len(addresses))
-    responses = []
-    for addr in addresses[:10]:
-        balance = safe_fetch_balance(addr, dynamic_delay)
-        txs = safe_fetch_transactions(addr, dynamic_delay)
-        if txs:
-            last_tx_time = int(txs[0]['timeStamp'])
-            last_activity = get_age(last_tx_time)
-            latest_25 = txs[:25]
-            if latest_25 and all(tx.get('input', '').lower() == "0x5c36b186" for tx in latest_25):
-                stall_status = "🚨 Node Stall"
-            else:
-                stall_status = "✅ Normal"
-        else:
-            last_activity = "N/A"
-            stall_status = "No transactions found"
-        responses.append(
-            f"🔹 {shorten_address(addr)}\n"
-            f"💵 Balance: {balance:.4f} ETH\n"
-            f"⏳ Last activity: {last_activity}\n"
-            f"⚠️ Status: {stall_status}\n"
-            f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | "
-            f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
-        )
-    update.message.reply_text("🚨 Node Stall Check\n\n" + "\n\n".join(responses) +
-                              f"\n\n⏰ Last update: {format_time(get_wib_time())}",
-                              parse_mode="Markdown", reply_markup=main_menu_keyboard(update.effective_user.id))
-
 # ==================== COMMAND HANDLER UNTUK AUTO NODE STALL ====================
 def menu_auto_node_stall(update, context):
     chat_id = update.effective_chat.id
@@ -290,8 +255,7 @@ def main_menu_keyboard(user_id: int) -> ReplyKeyboardMarkup:
         ["Check Status", "Node Health"],
         ["Auto Update", "Enable Alerts"],
         ["Auto Node Stall"],
-        ["Stop", "Help"],
-        ["Node Stall"]
+        ["Stop", "Help"]
     ]
     if user_id in ADMIN_IDS:
         keyboard.append(["Announce"])
@@ -312,7 +276,6 @@ def help_command(update, context):
         "• Remove Address: Remove a wallet address from your list.\n"
         "• Check Status: View node status, balance, and recent activity.\n"
         "• Node Health: Check node health based on the last 25 transactions divided into 5 groups.\n"
-        "• Node Stall: (Manual) Check node stall status immediately.\n"
         "• Auto Update: Enable automatic status updates every 5 minutes.\n"
         "• Enable Alerts: Receive notifications if no transactions in 15 minutes.\n"
         "• Auto Node Stall: Automatically monitor node stall and alert if detected.\n"
@@ -564,7 +527,6 @@ def main():
     dp.add_handler(MessageHandler(Filters.regex("^Auto Node Stall$"), menu_auto_node_stall))
     dp.add_handler(MessageHandler(Filters.regex("^Stop$"), menu_stop))
     dp.add_handler(MessageHandler(Filters.regex("^Help$"), help_command))
-    dp.add_handler(MessageHandler(Filters.regex("^Node Stall$"), menu_node_stall))
 
     updater.start_polling()
     logger.info("Bot is running...")
