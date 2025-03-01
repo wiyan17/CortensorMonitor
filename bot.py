@@ -105,7 +105,7 @@ def get_dynamic_delay(num_addresses: int) -> float:
 def safe_fetch_balance(address: str, delay: float) -> float:
     """
     Safely fetch the balance of the address using Arbiscans API.
-    Retries with exponential backoff if rate limit error is encountered.
+    Retries with exponential backoff if a rate limit error is encountered.
     """
     max_retries = 3
     for attempt in range(max_retries):
@@ -139,7 +139,7 @@ def safe_fetch_balance(address: str, delay: float) -> float:
 def safe_fetch_transactions(address: str, delay: float) -> list:
     """
     Safely fetch the list of transactions for the address using Arbiscans API.
-    Retries with exponential backoff if rate limit error is encountered.
+    Retries with exponential backoff if a rate limit error is encountered.
     """
     max_retries = 3
     for attempt in range(max_retries):
@@ -396,9 +396,12 @@ def help_command(update, context):
         "• *Remove Address*: ➖ Remove a wallet address from your list.\n"
         "• *Check Status*: 📊 View combined node status, health, & stall info.\n"
         "• *Auto Update*: 🔄 Enable automatic updates every 5 minutes with combined info.\n"
-        "• *Enable Alerts*: 🔔 Receive notifications if no transactions in 15 minutes or if a node stall is detected.\n"
-        "• *Auto Node Stall*: ⏱️ Periodically check for node stall only.\n"
-        "• *Stop*: ⛔ Disable auto-updates and alerts.\n"
+        "   - Explanation: This command automatically updates your node status every 5 minutes, providing balance, recent activity, health, and stall information.\n"
+        "• *Enable Alerts*: 🔔 Receive notifications if no transactions occur in 15 minutes or if a node stall is detected.\n"
+        "   - Explanation: This command monitors your node transactions and sends alerts when issues are detected.\n"
+        "• *Auto Node Stall*: ⏱️ Periodically check if your node is stalled (only PING transactions) and provide a summary update.\n"
+        "   - Explanation: This command sends concise updates about your node's stall status.\n"
+        "• *Stop*: ⛔ Disable all auto-update and alert jobs.\n"
         "• *Announce* (Admin only): 📣 Send an announcement to all chats.\n\n"
         "💡 *Fun Fact*: Every blockchain transaction is like a digital heartbeat. Monitor your node and be a digital hero! 🦸‍♂️\n\n"
         "🚀 *Happy Monitoring!*",
@@ -453,7 +456,7 @@ def menu_auto_update(update, context):
         update.effective_message.reply_text("Auto-update is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
     context.job_queue.run_repeating(auto_update, interval=UPDATE_INTERVAL, context={'chat_id': chat_id}, name=f"auto_update_{chat_id}")
-    update.effective_message.reply_text("✅ Auto-update started.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    update.effective_message.reply_text("✅ Auto-update started.\n\nExplanation: This command will automatically fetch and send you a consolidated update of your node's balance, status, activity, and health every 5 minutes.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def menu_auto_node_stall(update, context):
     chat_id = update.effective_chat.id
@@ -465,7 +468,7 @@ def menu_auto_node_stall(update, context):
         update.effective_message.reply_text("Auto Node Stall is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
     context.job_queue.run_repeating(auto_node_stall, interval=UPDATE_INTERVAL, context={'chat_id': chat_id}, name=f"auto_node_stall_{chat_id}")
-    update.effective_message.reply_text("✅ Auto Node Stall started.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    update.effective_message.reply_text("✅ Auto Node Stall started.\n\nExplanation: This command will periodically check if your node is stalled (only PING transactions) and provide you with a brief update.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def menu_enable_alerts(update, context):
     chat_id = update.effective_chat.id
@@ -477,7 +480,7 @@ def menu_enable_alerts(update, context):
         update.effective_message.reply_text("Alerts are already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
     context.job_queue.run_repeating(alert_check, interval=900, context={'chat_id': chat_id}, name=f"alert_{chat_id}")
-    update.effective_message.reply_text("✅ Alerts enabled.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    update.effective_message.reply_text("✅ Alerts enabled.\n\nExplanation: This command monitors your node and sends you an alert if there are no transactions for 15 minutes or if a node stall is detected.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def menu_stop(update, context):
     chat_id = update.effective_chat.id
@@ -523,7 +526,6 @@ def main():
 
     logger.info("Bot is starting...")
 
-    # Add both command and plain-text handlers for these actions
     dp.add_handler(CommandHandler("start", start_command))
     dp.add_handler(CommandHandler("help", help_command))
     dp.add_handler(CommandHandler("auto_update", menu_auto_update))
