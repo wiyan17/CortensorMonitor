@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# Cortensor Node Monitoring Bot (PTB v13.5 Compatible) – Reply Keyboard Version (English)
-# This bot sends node status updates, alerts, and periodic checks via Telegram.
-# It logs errors and reports them to admin users, displaying status with emojis and hyperlinks.
+"""
+Cortensor Node Monitoring Bot (PTB v13.5 Compatible) – Reply Keyboard Version (English)
+This bot sends node status updates, alerts, and periodic checks via Telegram.
+It logs errors and reports them to admin users, and displays status with emojis and hyperlinks.
+"""
 
 import logging
 import requests
@@ -11,9 +13,11 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler, CallbackContext
+from telegram.ext import (Updater, CommandHandler, MessageHandler, Filters,
+                          ConversationHandler, CallbackContext)
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
 load_dotenv()
 
 # ==================== CONFIGURATION ====================
@@ -29,7 +33,8 @@ ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
 
 # ==================== INITIALIZATION ====================
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                    level=logging.INFO)
 logger = logging.getLogger(__name__)
 WIB = timezone(timedelta(hours=7))  # WIB timezone (UTC+7)
 
@@ -154,7 +159,6 @@ def fetch_node_stats(address: str) -> dict:
         return {}
 
 # ==================== JOB FUNCTIONS ====================
-
 def auto_update(context: CallbackContext):
     """
     Send an auto-update message with combined node status, health, and stall info.
@@ -166,7 +170,6 @@ def auto_update(context: CallbackContext):
     if not addresses:
         context.bot.send_message(chat_id=chat_id, text="ℹ️ No addresses found! Please use 'Add Address'.")
         return
-
     dynamic_delay = get_dynamic_delay(len(addresses))
     output_lines = []
     for addr in addresses:
@@ -315,6 +318,78 @@ def help_command(update, context):
         parse_mode="Markdown"
     )
 
+def add_address_start(update, context):
+    update.message.reply_text("Please send me the wallet address to add:", reply_markup=ReplyKeyboardRemove())
+    return ADD_ADDRESS
+
+def add_address_receive(update, context):
+    chat_id = update.effective_chat.id
+    address = update.message.text.strip().lower()
+    if not address.startswith("0x") or len(address) != 42:
+        update.message.reply_text("❌ Invalid address! It must start with '0x' and be 42 characters long. Please send a valid address or type /cancel to abort.")
+        return ADD_ADDRESS
+    addresses = get_addresses_for_chat(chat_id)
+    if address in addresses:
+        update.message.reply_text("⚠️ Address already added!\nReturning to main menu.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    if len(addresses) >= 10:
+        update.message.reply_text("❌ Maximum 10 addresses per chat!\nReturning to main menu.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    addresses.append(address)
+    update_addresses_for_chat(chat_id, addresses)
+    update.message.reply_text(f"✅ Added {shorten_address(address)} to your list!", reply_markup=main_menu_keyboard(update.effective_user.id))
+    return ConversationHandler.END
+
+def remove_address_start(update, context):
+    chat_id = update.effective_chat.id
+    addresses = get_addresses_for_chat(chat_id)
+    if not addresses:
+        update.message.reply_text("No addresses found to remove.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    keyboard = [[addr] for addr in addresses]
+    keyboard.append(["Cancel"])
+    update.message.reply_text("Select the address to remove:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True))
+    return REMOVE_ADDRESS
+
+def remove_address_receive(update, context):
+    chat_id = update.effective_chat.id
+    choice = update.message.text.strip()
+    if choice == "Cancel":
+        update.message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    addresses = get_addresses_for_chat(chat_id)
+    if choice not in addresses:
+        update.message.reply_text("❌ Address not found.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    addresses.remove(choice)
+    update_addresses_for_chat(chat_id, addresses)
+    update.message.reply_text(f"✅ Removed {shorten_address(choice)} from your list!", reply_markup=main_menu_keyboard(update.effective_user.id))
+    return ConversationHandler.END
+
+def announce_start(update, context):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        update.message.reply_text("❌ You are not authorized to use this command.", reply_markup=main_menu_keyboard(user_id))
+        return ConversationHandler.END
+    update.message.reply_text("Please send the announcement message:", reply_markup=ReplyKeyboardRemove())
+    return ANNOUNCE
+
+def announce_receive(update, context):
+    message = update.message.text
+    data = load_data()
+    if not data:
+        update.message.reply_text("No chats found to announce to.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    count = 0
+    for chat in data.keys():
+        try:
+            context.bot.send_message(chat_id=int(chat), text=message)
+            count += 1
+        except Exception as e:
+            logger.error(f"Error sending announcement to chat {chat}: {e}")
+    update.message.reply_text(f"📣 Announcement sent to {count} chats.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    return ConversationHandler.END
+
 def menu_check_status(update, context):
     chat_id = update.effective_chat.id
     addresses = get_addresses_for_chat(chat_id)
@@ -406,30 +481,6 @@ def menu_stop(update, context):
     else:
         update.message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
-def announce_start(update, context):
-    user_id = update.effective_user.id
-    if user_id not in ADMIN_IDS:
-        update.message.reply_text("❌ You are not authorized to use this command.", reply_markup=main_menu_keyboard(user_id))
-        return ConversationHandler.END
-    update.message.reply_text("Please send the announcement message:", reply_markup=ReplyKeyboardRemove())
-    return ANNOUNCE
-
-def announce_receive(update, context):
-    message = update.message.text
-    data = load_data()
-    if not data:
-        update.message.reply_text("No chats found to announce to.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return ConversationHandler.END
-    count = 0
-    for chat in data.keys():
-        try:
-            context.bot.send_message(chat_id=int(chat), text=message)
-            count += 1
-        except Exception as e:
-            logger.error(f"Error sending announcement to chat {chat}: {e}")
-    update.message.reply_text(f"📣 Announcement sent to {count} chats.", reply_markup=main_menu_keyboard(update.effective_user.id))
-    return ConversationHandler.END
-
 # ==================== MAIN FUNCTION ====================
 def main():
     updater = Updater(TOKEN)
@@ -482,7 +533,7 @@ def main():
     logger.info("Bot is running... 🚀")
     updater.idle()
 
-# Fallback start command
+# Fallback Start Command
 def start_command(update, context):
     user_id = update.effective_user.id
     update.message.reply_text(
