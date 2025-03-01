@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Cortensor Node Monitoring Bot (PTB v13.5 Compatible) – Reply Keyboard Version (English)
+# This script sends status updates, alerts, and periodic checks via Telegram.
+# It now includes appropriate emojis and inline English explanations for better clarity.
 
 import logging
 import requests
@@ -25,10 +27,10 @@ load_dotenv()
 # ==================== CONFIGURATION ====================
 TOKEN = os.getenv("TOKEN")
 API_KEY = os.getenv("API_KEY")
-UPDATE_INTERVAL = 300  # 5 minutes
+UPDATE_INTERVAL = 300  # 5 minutes interval for updates ⏱️
 CORTENSOR_API = "https://dashboard-devnet3.cortensor.network"
 
-# ADMIN_IDS should be a comma-separated list of Telegram user IDs (e.g., "12345678,87654321")
+# ADMIN_IDS: list of Telegram user IDs for admin notifications 👮‍♂️
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 
 # File to persistently store addresses per chat (also used for tracking chat IDs)
@@ -47,6 +49,7 @@ ADD_ADDRESS, REMOVE_ADDRESS, ANNOUNCE = range(1, 4)
 
 # ==================== DATA STORAGE FUNCTIONS ====================
 def load_data() -> dict:
+    """Load stored chat data from the JSON file."""
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r") as f:
@@ -56,6 +59,7 @@ def load_data() -> dict:
     return {}
 
 def save_data(data: dict):
+    """Save the chat data to the JSON file."""
     try:
         with open(DATA_FILE, "w") as f:
             json.dump(data, f)
@@ -63,25 +67,31 @@ def save_data(data: dict):
         logger.error(f"Error saving data: {e}")
 
 def get_addresses_for_chat(chat_id: int) -> list:
+    """Return a list of addresses for the given chat ID."""
     data = load_data()
     return data.get(str(chat_id), [])
 
 def update_addresses_for_chat(chat_id: int, addresses: list):
+    """Update the stored addresses for the given chat ID."""
     data = load_data()
     data[str(chat_id)] = addresses
     save_data(data)
 
 # ==================== UTILITY FUNCTIONS ====================
 def shorten_address(address: str) -> str:
+    """Shorten a wallet address for display (e.g., 0x1234...abcd)."""
     return address[:6] + "..." + address[-4:] if len(address) > 10 else address
 
 def get_wib_time() -> datetime:
+    """Return the current time in WIB timezone."""
     return datetime.now(WIB)
 
 def format_time(time_obj: datetime) -> str:
+    """Format the given datetime object into a readable string."""
     return time_obj.strftime('%Y-%m-%d %H:%M:%S WIB')
 
 def get_age(timestamp: int) -> str:
+    """Return a string representing how long ago the timestamp was."""
     diff = datetime.now(WIB) - datetime.fromtimestamp(timestamp, WIB)
     seconds = int(diff.total_seconds())
     if seconds < 60:
@@ -92,7 +102,7 @@ def get_age(timestamp: int) -> str:
 # ==================== DYNAMIC RATE LIMIT HELPER ====================
 def get_dynamic_delay(num_addresses: int) -> float:
     """
-    Calculate dynamic delay per API call so that total calls do not exceed 5 per second.
+    Calculate a dynamic delay per API call so that total calls do not exceed 5 per second.
     Assumption: Each address requires 2 API calls (balance & txlist).
     """
     total_calls = 2 * num_addresses
@@ -103,6 +113,7 @@ def get_dynamic_delay(num_addresses: int) -> float:
     return required_total_time / intervals
 
 def safe_fetch_balance(address: str, delay: float) -> float:
+    """Fetch wallet balance safely with error logging."""
     try:
         params = {
             "module": "account",
@@ -120,6 +131,7 @@ def safe_fetch_balance(address: str, delay: float) -> float:
     return result
 
 def safe_fetch_transactions(address: str, delay: float) -> list:
+    """Fetch the transaction list for the address with error handling."""
     try:
         params = {
             "module": "account",
@@ -145,6 +157,7 @@ def safe_fetch_transactions(address: str, delay: float) -> list:
 
 # ==================== API FUNCTIONS (without internal delay) ====================
 def fetch_node_stats(address: str) -> dict:
+    """Fetch node statistics from the dashboard API."""
     try:
         url = f"{CORTENSOR_API}/nodestats/{address}"
         response = requests.get(url, timeout=15)
@@ -157,7 +170,8 @@ def fetch_node_stats(address: str) -> dict:
 
 def auto_update(context: CallbackContext):
     """
-    Combined auto-update output showing status, health, and stall info.
+    Send an auto-update message with combined node status, health, and stall info.
+    Emojis are used to visually indicate status.
     """
     job = context.job
     chat_id = job.context['chat_id']
@@ -181,6 +195,7 @@ def auto_update(context: CallbackContext):
             health_list = []
             for group in groups:
                 if group:
+                    # 🟩 indicates success in group, 🟥 indicates error detected, ⬜ means no data.
                     health_list.append("🟩" if all(tx.get('isError') == '0' for tx in group) else "🟥")
                 else:
                     health_list.append("⬜")
@@ -191,19 +206,22 @@ def auto_update(context: CallbackContext):
             last_activity = "N/A"
             health_status = "No transactions"
             stall_status = "No transactions"
+        # Hyperlinks for Arbiscans and the Dashboard are included
         output_lines.append(
             f"*{shorten_address(addr)}*\n"
-            f"Balance: `{balance:.4f} ETH` | Status: {status}\n"
-            f"Last Activity: `{last_activity}`\n"
-            f"Health: {health_status} | Stall: {stall_status}\n"
-            f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3','sepolia.arbiscan.io/address')}/{addr}) | [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
+            f"💰 Balance: `{balance:.4f} ETH` | Status: {status}\n"
+            f"⏱️ Last Activity: `{last_activity}`\n"
+            f"🩺 Health: {health_status} | Stall: {stall_status}\n"
+            f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3','sepolia.arbiscan.io/address')}/{addr}) | "
+            f"[Dashboard]({CORTENSOR_API}/nodestats/{addr})"
         )
     final_output = "*Auto Update*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
     context.bot.send_message(chat_id=chat_id, text=final_output, parse_mode="Markdown")
 
 def alert_check(context: CallbackContext):
     """
-    Alert if the latest transaction is older than 15 minutes or if stall condition is met.
+    Check for alerts: if no transactions in the last 15 minutes or if a node stall is detected,
+    send an alert message with appropriate emojis.
     """
     job = context.job
     chat_id = job.context['chat_id']
@@ -219,9 +237,9 @@ def alert_check(context: CallbackContext):
             if time_diff > timedelta(minutes=15) or stall_condition:
                 msg_lines = [f"🚨 *Alert for {shorten_address(addr)}*:"]
                 if time_diff > timedelta(minutes=15):
-                    msg_lines.append("- No transactions in the last 15 minutes.")
+                    msg_lines.append("⏱️ No transactions in the last 15 minutes.")
                 if stall_condition:
-                    msg_lines.append("- Node stall detected (only PING transactions in the last 25).")
+                    msg_lines.append("⚠️ Node stall detected (only PING transactions in the last 25).")
                 msg_lines.append(f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3','sepolia.arbiscan.io/address')}/{addr}) | [Dashboard]({CORTENSOR_API}/nodestats/{addr})")
                 context.bot.send_message(chat_id=chat_id, text="\n".join(msg_lines), parse_mode="Markdown")
         else:
@@ -233,7 +251,7 @@ def alert_check(context: CallbackContext):
 
 def auto_node_stall(context: CallbackContext):
     """
-    Periodically check for node stall only.
+    Periodically check for node stall only and send a concise update.
     """
     job = context.job
     chat_id = job.context['chat_id']
@@ -256,10 +274,11 @@ def auto_node_stall(context: CallbackContext):
             stall_status = "No transactions"
         output_lines.append(
             f"*{shorten_address(addr)}*\n"
-            f"Balance: `{balance:.4f} ETH`\n"
-            f"Last Activity: `{last_activity}`\n"
-            f"Stall: {stall_status}\n"
-            f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3','sepolia.arbiscan.io/address')}/{addr}) | [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
+            f"💰 Balance: `{balance:.4f} ETH`\n"
+            f"⏱️ Last Activity: `{last_activity}`\n"
+            f"⚠️ Stall: {stall_status}\n"
+            f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3','sepolia.arbiscan.io/address')}/{addr}) | "
+            f"[Dashboard]({CORTENSOR_API}/nodestats/{addr})"
         )
     final_output = "*Auto Node Stall Check*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
     context.bot.send_message(chat_id=chat_id, text=final_output, parse_mode="Markdown")
@@ -287,15 +306,15 @@ def start(update, context):
 def help_command(update, context):
     update.message.reply_text(
         "📖 *Cortensor Node Monitoring Bot Guide*\n\n"
-        "• *Add Address*: Add a wallet address.\n"
-        "• *Remove Address*: Remove a wallet address from your list.\n"
-        "• *Check Status*: View combined node status, health, & stall info.\n"
-        "• *Auto Update*: Enable automatic updates every 5 minutes with combined info.\n"
-        "• *Enable Alerts*: Receive notifications if no transactions in 15 minutes or if a node stall is detected.\n"
-        "• *Auto Node Stall*: Periodically check for node stall only.\n"
-        "• *Stop*: Disable auto-updates and alerts.\n"
-        "• *Announce* (Admin only): Send an announcement to all chats.\n\n"
-        "💡 *Fun Fact*: Every blockchain transaction is like a digital heartbeat. Monitor your node and be a digital hero!\n\n"
+        "• *Add Address*: ➕ Add a wallet address.\n"
+        "• *Remove Address*: ➖ Remove a wallet address from your list.\n"
+        "• *Check Status*: 📊 View combined node status, health, & stall info.\n"
+        "• *Auto Update*: 🔄 Enable automatic updates every 5 minutes with combined info.\n"
+        "• *Enable Alerts*: 🔔 Receive notifications if no transactions in 15 minutes or if a node stall is detected.\n"
+        "• *Auto Node Stall*: ⏱️ Periodically check for node stall only.\n"
+        "• *Stop*: ⛔ Disable auto-updates and alerts.\n"
+        "• *Announce* (Admin only): 📣 Send an announcement to all chats.\n\n"
+        "💡 *Fun Fact*: Every blockchain transaction is like a digital heartbeat. Monitor your node and be a digital hero! 🦸‍♂️\n\n"
         "🚀 *Happy Monitoring!*",
         reply_markup=main_menu_keyboard(update.effective_user.id),
         parse_mode="Markdown"
@@ -373,107 +392,8 @@ def announce_receive(update, context):
             count += 1
         except Exception as e:
             logger.error(f"Error sending announcement to chat {chat}: {e}")
-    update.message.reply_text(f"Announcement sent to {count} chats.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    update.message.reply_text(f"📣 Announcement sent to {count} chats.", reply_markup=main_menu_keyboard(update.effective_user.id))
     return ConversationHandler.END
-
-# ---------- Menu Function for "Check Status" ----------
-def menu_check_status(update, context):
-    chat_id = update.effective_chat.id
-    addresses = get_addresses_for_chat(chat_id)
-    if not addresses:
-        update.message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    dynamic_delay = get_dynamic_delay(len(addresses))
-    output_lines = []
-    for addr in addresses[:10]:
-        balance = safe_fetch_balance(addr, dynamic_delay)
-        txs = safe_fetch_transactions(addr, dynamic_delay)
-        if txs:
-            last_tx_time = int(txs[0]['timeStamp'])
-            time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
-            status = "🟢 Online" if time_diff <= timedelta(minutes=5) else "🔴 Offline"
-            last_activity = get_age(last_tx_time)
-            latest_25 = txs[:25]
-            groups = [latest_25[i*5:(i+1)*5] for i in range(5)]
-            health_list = []
-            for group in groups:
-                if group:
-                    health_list.append("🟩" if all(tx.get('isError') == '0' for tx in group) else "🟥")
-                else:
-                    health_list.append("⬜")
-            health_status = " ".join(health_list)
-            stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input', '').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
-        else:
-            status = "🔴 Offline"
-            last_activity = "N/A"
-            health_status = "No transactions"
-            stall_status = "No transactions"
-        output_lines.append(
-            f"*{shorten_address(addr)}*\n"
-            f"Balance: `{balance:.4f} ETH` | Status: {status}\n"
-            f"Last Activity: `{last_activity}`\n"
-            f"Health: {health_status} | Stall: {stall_status}\n"
-            f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3','sepolia.arbiscan.io/address')}/{addr}) | [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
-        )
-    final_output = "*Check Status*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
-    update.message.reply_text(final_output, parse_mode="Markdown", reply_markup=main_menu_keyboard(update.effective_user.id))
-
-# ---------- Command Functions to Start Jobs ----------
-def menu_auto_update(update, context):
-    chat_id = update.effective_chat.id
-    if not get_addresses_for_chat(chat_id):
-        update.message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    current_jobs = context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}")
-    if current_jobs:
-        update.message.reply_text("Auto-update is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    context.job_queue.run_repeating(auto_update, interval=UPDATE_INTERVAL, context={'chat_id': chat_id}, name=f"auto_update_{chat_id}")
-    update.message.reply_text("✅ Auto-update started.", reply_markup=main_menu_keyboard(update.effective_user.id))
-
-def menu_auto_node_stall(update, context):
-    chat_id = update.effective_chat.id
-    if not get_addresses_for_chat(chat_id):
-        update.message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    current_jobs = context.job_queue.get_jobs_by_name(f"auto_node_stall_{chat_id}")
-    if current_jobs:
-        update.message.reply_text("Auto Node Stall is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    context.job_queue.run_repeating(auto_node_stall, interval=UPDATE_INTERVAL, context={'chat_id': chat_id}, name=f"auto_node_stall_{chat_id}")
-    update.message.reply_text("✅ Auto Node Stall started.", reply_markup=main_menu_keyboard(update.effective_user.id))
-
-def menu_enable_alerts(update, context):
-    chat_id = update.effective_chat.id
-    if not get_addresses_for_chat(chat_id):
-        update.message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    current_jobs = context.job_queue.get_jobs_by_name(f"alert_{chat_id}")
-    if current_jobs:
-        update.message.reply_text("Alerts are already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    context.job_queue.run_repeating(alert_check, interval=900, context={'chat_id': chat_id}, name=f"alert_{chat_id}")
-    update.message.reply_text("✅ Alerts enabled.", reply_markup=main_menu_keyboard(update.effective_user.id))
-
-def menu_stop(update, context):
-    chat_id = update.effective_chat.id
-    removed_jobs = 0
-    for job_name in (f"auto_update_{chat_id}", f"alert_{chat_id}", f"auto_node_stall_{chat_id}"):
-        jobs = context.job_queue.get_jobs_by_name(job_name)
-        for job in jobs:
-            job.schedule_removal()
-            removed_jobs += 1
-    if removed_jobs:
-        update.message.reply_text("✅ Auto-update, alerts, and auto node stall have been stopped.", reply_markup=main_menu_keyboard(update.effective_user.id))
-    else:
-        update.message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
-
-# ==================== ERROR HANDLER ====================
-def error_handler(update, context):
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
-    error_text = f"⚠️ An error occurred: {context.error}"
-    for admin_id in ADMIN_IDS:
-        context.bot.send_message(chat_id=admin_id, text=error_text)
 
 # ==================== MAIN FUNCTION ====================
 def main():
@@ -482,6 +402,7 @@ def main():
 
     logger.info("Bot is starting...")
 
+    # Command Handlers
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("help", help_command))
     dp.add_handler(CommandHandler("auto_update", menu_auto_update))
@@ -492,6 +413,7 @@ def main():
     dp.add_handler(CommandHandler("announce", announce_start))
     dp.add_error_handler(error_handler)
 
+    # Conversation Handlers for Add/Remove Address and Announce
     conv_add = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Add Address$"), add_address_start)],
         states={
@@ -522,7 +444,7 @@ def main():
     dp.add_handler(MessageHandler(Filters.regex("^Check Status$"), menu_check_status))
 
     updater.start_polling()
-    logger.info("Bot is running...")
+    logger.info("Bot is running... 🚀")
     updater.idle()
 
 if __name__ == "__main__":
