@@ -89,14 +89,14 @@ def get_age(timestamp: int) -> str:
 # -------------------- DYNAMIC RATE LIMIT HELPER --------------------
 def get_dynamic_delay(num_addresses: int) -> float:
     """
-    Calculate a dynamic delay per API call so that total calls do not exceed 5 per second.
-    Enforces a minimum delay of 0.2 seconds.
+    Calculate a dynamic delay per API call so that total calls do not exceed 0.5 API calls per second.
+    This enforces a minimum delay of 2.0 seconds between calls.
     """
-    base_delay = 0.2  # Minimum delay (max 5 calls/sec)
+    base_delay = 2.0  # Minimum delay for 0.5 calls/sec (1 call every 2 sec)
     total_calls = 2 * num_addresses  # 2 API calls per address: balance & txlist
-    if total_calls <= 5:
+    if total_calls <= 0.5:
         return base_delay
-    required_total_time = total_calls / 5.0
+    required_total_time = total_calls / 0.5  # in seconds
     intervals = total_calls - 1
     dynamic_delay = required_total_time / intervals
     return max(dynamic_delay, base_delay)
@@ -208,17 +208,18 @@ def auto_update(context: CallbackContext):
             groups = [latest_25[i*5:(i+1)*5] for i in range(5)]
             health_list = [("🟩" if all(tx.get('isError') == '0' for tx in group) else "🟥") if group else "⬜" for group in groups]
             health_status = " ".join(health_list)
-            stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
+            # Auto Update does not check for node stall separately.
+            stall_status = "N/A"
         else:
             status = "🔴 Offline"
             last_activity = "N/A"
             health_status = "No transactions"
-            stall_status = "No transactions"
+            stall_status = "N/A"
         output_lines.append(
             f"*{shorten_address(addr)}*\n"
             f"💰 Balance: `{balance:.4f} ETH` | Status: {status}\n"
             f"⏱️ Last Activity: `{last_activity}`\n"
-            f"🩺 Health: {health_status} | Stall: {stall_status}\n"
+            f"🩺 Health: {health_status}\n"
             f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3','sepolia.arbiscan.io/address')}/{addr}) | "
             f"[Dashboard]({CORTENSOR_API}/nodestats/{addr})"
         )
@@ -258,47 +259,12 @@ def alert_check(context: CallbackContext):
                 parse_mode="Markdown"
             )
 
-def auto_node_stall(context: CallbackContext):
-    """
-    Job function: send a concise update for node stall status.
-    """
-    job = context.job
-    chat_id = job.context['chat_id']
-    addresses = get_addresses_for_chat(chat_id)[:10]
-    if not addresses:
-        context.bot.send_message(chat_id=chat_id, text="ℹ️ No addresses found! Please add one using 'Add Address'.")
-        return
-    delay = get_dynamic_delay(len(addresses))
-    output_lines = []
-    for addr in addresses:
-        balance = safe_fetch_balance(addr, delay)
-        txs = safe_fetch_transactions(addr, delay)
-        if txs:
-            latest_25 = txs[:25]
-            stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
-            last_tx_time = int(txs[0]['timeStamp'])
-            last_activity = get_age(last_tx_time)
-        else:
-            last_activity = "N/A"
-            stall_status = "No transactions"
-        output_lines.append(
-            f"*{shorten_address(addr)}*\n"
-            f"💰 Balance: `{balance:.4f} ETH`\n"
-            f"⏱️ Last Activity: `{last_activity}`\n"
-            f"⚠️ Stall: {stall_status}\n"
-            f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3','sepolia.arbiscan.io/address')}/{addr}) | "
-            f"[Dashboard]({CORTENSOR_API}/nodestats/{addr})"
-        )
-    final_output = "*Auto Node Stall Check*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
-    context.bot.send_message(chat_id=chat_id, text=final_output, parse_mode="Markdown")
-
 # -------------------- MENU KEYBOARDS --------------------
 def main_menu_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     keyboard = [
         ["Add Address", "Remove Address"],
         ["Check Status", "Auto Update"],
-        ["Enable Alerts", "Auto Node Stall"],
-        ["Stop", "Help"]
+        ["Enable Alerts", "Stop", "Help"]
     ]
     if user_id in ADMIN_IDS:
         keyboard.append(["Announce"])
@@ -396,12 +362,10 @@ def help_command(update, context):
         "• *Remove Address*: ➖ Remove a wallet address from your list.\n"
         "• *Check Status*: 📊 View combined node status, health, & stall info.\n"
         "• *Auto Update*: 🔄 Enable automatic updates every 5 minutes with combined info.\n"
-        "   - Explanation: This command automatically updates your node status every 5 minutes, providing balance, recent activity, health, and stall information.\n"
-        "• *Enable Alerts*: 🔔 Receive notifications if no transactions occur in 15 minutes or if a node stall is detected.\n"
-        "   - Explanation: This command monitors your node transactions and sends alerts when issues are detected.\n"
-        "• *Auto Node Stall*: ⏱️ Periodically check if your node is stalled (only PING transactions) and provide a summary update.\n"
-        "   - Explanation: This command sends concise updates about your node's stall status.\n"
-        "• *Stop*: ⛔ Disable all auto-update and alert jobs.\n"
+        "   - Explanation: This command automatically fetches and sends you a consolidated update of your node's balance, status, recent activity, and overall health every 5 minutes.\n"
+        "• *Enable Alerts*: 🔔 Receive notifications if there are no transactions for 15 minutes or if a node stall is detected.\n"
+        "   - Explanation: This command monitors your node and alerts you when issues occur.\n"
+        "• *Stop*: ⛔ Disable auto-updates and alerts.\n"
         "• *Announce* (Admin only): 📣 Send an announcement to all chats.\n\n"
         "💡 *Fun Fact*: Every blockchain transaction is like a digital heartbeat. Monitor your node and be a digital hero! 🦸‍♂️\n\n"
         "🚀 *Happy Monitoring!*",
@@ -429,17 +393,17 @@ def menu_check_status(update, context):
             groups = [latest_25[i*5:(i+1)*5] for i in range(5)]
             health_list = [("🟩" if all(tx.get('isError') == '0' for tx in group) else "🟥") if group else "⬜" for group in groups]
             health_status = " ".join(health_list)
-            stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
+            stall_status = "N/A"  # Removed auto node stall info from check status
         else:
             status = "🔴 Offline"
             last_activity = "N/A"
             health_status = "No transactions"
-            stall_status = "No transactions"
+            stall_status = "N/A"
         output_lines.append(
             f"*{shorten_address(addr)}*\n"
             f"💰 Balance: `{balance:.4f} ETH` | Status: {status}\n"
             f"⏱️ Last Activity: `{last_activity}`\n"
-            f"🩺 Health: {health_status} | Stall: {stall_status}\n"
+            f"🩺 Health: {health_status}\n"
             f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3','sepolia.arbiscan.io/address')}/{addr}) | "
             f"[Dashboard]({CORTENSOR_API}/nodestats/{addr})"
         )
@@ -456,19 +420,7 @@ def menu_auto_update(update, context):
         update.effective_message.reply_text("Auto-update is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
     context.job_queue.run_repeating(auto_update, interval=UPDATE_INTERVAL, context={'chat_id': chat_id}, name=f"auto_update_{chat_id}")
-    update.effective_message.reply_text("✅ Auto-update started.\n\nExplanation: This command will automatically fetch and send you a consolidated update of your node's balance, status, activity, and health every 5 minutes.", reply_markup=main_menu_keyboard(update.effective_user.id))
-
-def menu_auto_node_stall(update, context):
-    chat_id = update.effective_chat.id
-    if not get_addresses_for_chat(chat_id):
-        update.effective_message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    current_jobs = context.job_queue.get_jobs_by_name(f"auto_node_stall_{chat_id}")
-    if current_jobs:
-        update.effective_message.reply_text("Auto Node Stall is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    context.job_queue.run_repeating(auto_node_stall, interval=UPDATE_INTERVAL, context={'chat_id': chat_id}, name=f"auto_node_stall_{chat_id}")
-    update.effective_message.reply_text("✅ Auto Node Stall started.\n\nExplanation: This command will periodically check if your node is stalled (only PING transactions) and provide you with a brief update.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    update.effective_message.reply_text("✅ Auto-update started.\n\nExplanation: This command will automatically fetch and send you a consolidated update of your node's balance, status, recent activity, and overall health every 5 minutes.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def menu_enable_alerts(update, context):
     chat_id = update.effective_chat.id
@@ -485,13 +437,13 @@ def menu_enable_alerts(update, context):
 def menu_stop(update, context):
     chat_id = update.effective_chat.id
     removed_jobs = 0
-    for job_name in (f"auto_update_{chat_id}", f"alert_{chat_id}", f"auto_node_stall_{chat_id}"):
+    for job_name in (f"auto_update_{chat_id}", f"alert_{chat_id}"):
         jobs = context.job_queue.get_jobs_by_name(job_name)
         for job in jobs:
             job.schedule_removal()
             removed_jobs += 1
     if removed_jobs:
-        update.effective_message.reply_text("✅ Auto-update, alerts, and auto node stall have been stopped.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        update.effective_message.reply_text("✅ Auto-update and alerts have been stopped.", reply_markup=main_menu_keyboard(update.effective_user.id))
     else:
         update.effective_message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
@@ -530,8 +482,6 @@ def main():
     dp.add_handler(CommandHandler("help", help_command))
     dp.add_handler(CommandHandler("auto_update", menu_auto_update))
     dp.add_handler(MessageHandler(Filters.regex("^Auto Update$"), menu_auto_update))
-    dp.add_handler(CommandHandler("auto_node_stall", menu_auto_node_stall))
-    dp.add_handler(MessageHandler(Filters.regex("^Auto Node Stall$"), menu_auto_node_stall))
     dp.add_handler(CommandHandler("enable_alerts", menu_enable_alerts))
     dp.add_handler(MessageHandler(Filters.regex("^Enable Alerts$"), menu_enable_alerts))
     dp.add_handler(CommandHandler("stop", menu_stop))
