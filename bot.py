@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Cortensor Node Monitoring Bot (PTB v13.5 Compatible) – Reply Keyboard Version (English)
-# This script sends status updates, alerts, and periodic checks via Telegram.
-# It now includes appropriate emojis and inline English explanations for better clarity.
+# This bot sends node status updates, alerts, and periodic checks via Telegram.
+# It now includes detailed logging, error reporting to admins, and enhanced output formatting with emojis and hyperlinks.
 
 import logging
 import requests
@@ -27,13 +27,13 @@ load_dotenv()
 # ==================== CONFIGURATION ====================
 TOKEN = os.getenv("TOKEN")
 API_KEY = os.getenv("API_KEY")
-UPDATE_INTERVAL = 300  # 5 minutes interval for updates ⏱️
+UPDATE_INTERVAL = 300  # 5 minutes update interval ⏱️
 CORTENSOR_API = "https://dashboard-devnet3.cortensor.network"
 
-# ADMIN_IDS: list of Telegram user IDs for admin notifications 👮‍♂️
+# ADMIN_IDS: comma-separated list of Telegram admin user IDs 👮‍♂️
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 
-# File to persistently store addresses per chat (also used for tracking chat IDs)
+# File to store addresses persistently
 DATA_FILE = "data.json"
 
 # ==================== INITIALIZATION ====================
@@ -41,15 +41,13 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-# WIB timezone (UTC+7)
-WIB = timezone(timedelta(hours=7))
+WIB = timezone(timedelta(hours=7))  # WIB timezone (UTC+7)
 
 # ==================== CONVERSATION STATES ====================
 ADD_ADDRESS, REMOVE_ADDRESS, ANNOUNCE = range(1, 4)
 
 # ==================== DATA STORAGE FUNCTIONS ====================
 def load_data() -> dict:
-    """Load stored chat data from the JSON file."""
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r") as f:
@@ -59,7 +57,6 @@ def load_data() -> dict:
     return {}
 
 def save_data(data: dict):
-    """Save the chat data to the JSON file."""
     try:
         with open(DATA_FILE, "w") as f:
             json.dump(data, f)
@@ -67,31 +64,25 @@ def save_data(data: dict):
         logger.error(f"Error saving data: {e}")
 
 def get_addresses_for_chat(chat_id: int) -> list:
-    """Return a list of addresses for the given chat ID."""
     data = load_data()
     return data.get(str(chat_id), [])
 
 def update_addresses_for_chat(chat_id: int, addresses: list):
-    """Update the stored addresses for the given chat ID."""
     data = load_data()
     data[str(chat_id)] = addresses
     save_data(data)
 
 # ==================== UTILITY FUNCTIONS ====================
 def shorten_address(address: str) -> str:
-    """Shorten a wallet address for display (e.g., 0x1234...abcd)."""
     return address[:6] + "..." + address[-4:] if len(address) > 10 else address
 
 def get_wib_time() -> datetime:
-    """Return the current time in WIB timezone."""
     return datetime.now(WIB)
 
 def format_time(time_obj: datetime) -> str:
-    """Format the given datetime object into a readable string."""
     return time_obj.strftime('%Y-%m-%d %H:%M:%S WIB')
 
 def get_age(timestamp: int) -> str:
-    """Return a string representing how long ago the timestamp was."""
     diff = datetime.now(WIB) - datetime.fromtimestamp(timestamp, WIB)
     seconds = int(diff.total_seconds())
     if seconds < 60:
@@ -102,18 +93,17 @@ def get_age(timestamp: int) -> str:
 # ==================== DYNAMIC RATE LIMIT HELPER ====================
 def get_dynamic_delay(num_addresses: int) -> float:
     """
-    Calculate a dynamic delay per API call so that total calls do not exceed 5 per second.
+    Calculate dynamic delay per API call so that total calls do not exceed 5 per second.
     Assumption: Each address requires 2 API calls (balance & txlist).
     """
     total_calls = 2 * num_addresses
     if total_calls <= 5:
         return 0.0
-    required_total_time = total_calls / 5.0  # in seconds
+    required_total_time = total_calls / 5.0  # seconds
     intervals = total_calls - 1
     return required_total_time / intervals
 
 def safe_fetch_balance(address: str, delay: float) -> float:
-    """Fetch wallet balance safely with error logging."""
     try:
         params = {
             "module": "account",
@@ -131,7 +121,6 @@ def safe_fetch_balance(address: str, delay: float) -> float:
     return result
 
 def safe_fetch_transactions(address: str, delay: float) -> list:
-    """Fetch the transaction list for the address with error handling."""
     try:
         params = {
             "module": "account",
@@ -147,7 +136,7 @@ def safe_fetch_transactions(address: str, delay: float) -> list:
         if isinstance(result, list) and result and isinstance(result[0], dict):
             tx_list = result
         else:
-            logger.error(f"Unexpected transactions format for address {address}: {result}")
+            logger.error(f"Unexpected transactions format for {address}: {result}")
             tx_list = []
     except Exception as e:
         logger.error(f"Tx error for {address}: {e}")
@@ -157,7 +146,6 @@ def safe_fetch_transactions(address: str, delay: float) -> list:
 
 # ==================== API FUNCTIONS (without internal delay) ====================
 def fetch_node_stats(address: str) -> dict:
-    """Fetch node statistics from the dashboard API."""
     try:
         url = f"{CORTENSOR_API}/nodestats/{address}"
         response = requests.get(url, timeout=15)
@@ -171,7 +159,7 @@ def fetch_node_stats(address: str) -> dict:
 def auto_update(context: CallbackContext):
     """
     Send an auto-update message with combined node status, health, and stall info.
-    Emojis are used to visually indicate status.
+    Emojis and hyperlinks are used for better visualization.
     """
     job = context.job
     chat_id = job.context['chat_id']
@@ -195,7 +183,6 @@ def auto_update(context: CallbackContext):
             health_list = []
             for group in groups:
                 if group:
-                    # 🟩 indicates success in group, 🟥 indicates error detected, ⬜ means no data.
                     health_list.append("🟩" if all(tx.get('isError') == '0' for tx in group) else "🟥")
                 else:
                     health_list.append("⬜")
@@ -206,7 +193,6 @@ def auto_update(context: CallbackContext):
             last_activity = "N/A"
             health_status = "No transactions"
             stall_status = "No transactions"
-        # Hyperlinks for Arbiscans and the Dashboard are included
         output_lines.append(
             f"*{shorten_address(addr)}*\n"
             f"💰 Balance: `{balance:.4f} ETH` | Status: {status}\n"
@@ -220,8 +206,8 @@ def auto_update(context: CallbackContext):
 
 def alert_check(context: CallbackContext):
     """
-    Check for alerts: if no transactions in the last 15 minutes or if a node stall is detected,
-    send an alert message with appropriate emojis.
+    Check for alerts: if no transactions in the last 15 minutes or a node stall is detected,
+    send an alert message with relevant emojis and hyperlinks.
     """
     job = context.job
     chat_id = job.context['chat_id']
@@ -251,7 +237,7 @@ def alert_check(context: CallbackContext):
 
 def auto_node_stall(context: CallbackContext):
     """
-    Periodically check for node stall only and send a concise update.
+    Periodically check for node stall only and send a concise update with emojis.
     """
     job = context.job
     chat_id = job.context['chat_id']
@@ -296,7 +282,7 @@ def main_menu_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
 # ==================== COMMAND HANDLERS ====================
-def start(update, context):
+def start_command(update, context):
     user_id = update.effective_user.id
     update.message.reply_text(
         "👋 Welcome to Cortensor Node Monitoring Bot!\n\nI am here to help you monitor your node status easily. Choose an option from the menu below.",
@@ -403,7 +389,7 @@ def main():
     logger.info("Bot is starting...")
 
     # Command Handlers
-    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("start", start_command))
     dp.add_handler(CommandHandler("help", help_command))
     dp.add_handler(CommandHandler("auto_update", menu_auto_update))
     dp.add_handler(CommandHandler("auto_node_stall", menu_auto_node_stall))
