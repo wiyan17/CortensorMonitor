@@ -34,8 +34,9 @@ ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
 
 # -------------------- INITIALIZATION --------------------
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                    level=logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 WIB = timezone(timedelta(hours=7))  # WIB (UTC+7)
 
@@ -209,7 +210,7 @@ def auto_update(context: CallbackContext):
             groups = [latest_25[i*5:(i+1)*5] for i in range(5)]
             health_list = [("🟩" if all(tx.get('isError') == '0' for tx in group) else "🟥") if group else "⬜" for group in groups]
             health_status = " ".join(health_list)
-            stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
+            stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input', '').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
         else:
             status = "🔴 Offline"
             last_activity = "N/A"
@@ -260,10 +261,106 @@ def alert_check(context: CallbackContext):
                 parse_mode="Markdown"
             )
 
+# -------------------- CONVERSATION HANDLER FUNCTIONS --------------------
+def add_address_start(update, context):
+    update.effective_message.reply_text("Please send me the wallet address to add:", reply_markup=ReplyKeyboardRemove())
+    return ADD_ADDRESS
+
+def add_address_receive(update, context):
+    chat_id = update.effective_chat.id
+    address = update.effective_message.text.strip().lower()
+    if not address.startswith("0x") or len(address) != 42:
+        update.effective_message.reply_text("❌ Invalid address! It must start with '0x' and be 42 characters long. Please send a valid address or type /cancel to abort.")
+        return ADD_ADDRESS
+    addresses = get_addresses_for_chat(chat_id)
+    if address in addresses:
+        update.effective_message.reply_text("⚠️ Address already added!\nReturning to main menu.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    if len(addresses) >= 10:
+        update.effective_message.reply_text("❌ Maximum 10 addresses per chat!\nReturning to main menu.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    addresses.append(address)
+    update_addresses_for_chat(chat_id, addresses)
+    update.effective_message.reply_text(f"✅ Added {shorten_address(address)} to your list!", reply_markup=main_menu_keyboard(update.effective_user.id))
+    return ConversationHandler.END
+
+def remove_address_start(update, context):
+    chat_id = update.effective_chat.id
+    addresses = get_addresses_for_chat(chat_id)
+    if not addresses:
+        update.effective_message.reply_text("No addresses found to remove.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    keyboard = [[addr] for addr in addresses]
+    keyboard.append(["Cancel"])
+    update.effective_message.reply_text("Select the address to remove:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True))
+    return REMOVE_ADDRESS
+
+def remove_address_receive(update, context):
+    chat_id = update.effective_chat.id
+    choice = update.effective_message.text.strip()
+    if choice == "Cancel":
+        update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    addresses = get_addresses_for_chat(chat_id)
+    if choice not in addresses:
+        update.effective_message.reply_text("❌ Address not found.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    addresses.remove(choice)
+    update_addresses_for_chat(chat_id, addresses)
+    update.effective_message.reply_text(f"✅ Removed {shorten_address(choice)} from your list!", reply_markup=main_menu_keyboard(update.effective_user.id))
+    return ConversationHandler.END
+
+def announce_start(update, context):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        update.effective_message.reply_text("❌ You are not authorized to use this command.", reply_markup=main_menu_keyboard(user_id))
+        return ConversationHandler.END
+    update.effective_message.reply_text("Please send the announcement message:", reply_markup=ReplyKeyboardRemove())
+    return ANNOUNCE
+
+def announce_receive(update, context):
+    message = update.effective_message.text
+    data = load_data()
+    if not data:
+        update.effective_message.reply_text("No chats found to announce to.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    count = 0
+    for chat in data.keys():
+        try:
+            context.bot.send_message(chat_id=int(chat), text=message)
+            count += 1
+        except Exception as e:
+            logger.error(f"Error sending announcement to chat {chat}: {e}")
+    update.effective_message.reply_text(f"📣 Announcement sent to {count} chats.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    return ConversationHandler.END
+
+# -------------------- COMMAND FUNCTIONS --------------------
+def start_command(update, context):
+    user_id = update.effective_user.id
+    update.effective_message.reply_text(
+        "👋 Welcome to Cortensor Node Monitoring Bot!\n\nI am here to help you monitor your node status easily. Choose an option from the menu below.",
+        reply_markup=main_menu_keyboard(user_id)
+    )
+
+def help_command(update, context):
+    update.effective_message.reply_text(
+        "📖 *Cortensor Node Monitoring Bot Guide*\n\n"
+        "• *Add Address*: ➕ Add a wallet address.\n"
+        "• *Remove Address*: ➖ Remove a wallet address from your list.\n"
+        "• *Check Status*: 📊 View combined node status, health, & stall info.\n"
+        "• *Auto Update*: 🔄 Enable automatic updates every 5 minutes with combined info.\n"
+        "   - Explanation: This command automatically fetches and sends you a consolidated update of your node's balance, status, recent activity, health, and stall status every 5 minutes.\n"
+        "• *Enable Alerts*: 🔔 Receive notifications if there are no transactions for 15 minutes or if a node stall is detected.\n"
+        "   - Explanation: This command monitors your node and alerts you when issues occur.\n"
+        "• *Stop*: ⛔ Disable auto-updates and alerts.\n"
+        "• *Announce* (Admin only): 📣 Send an announcement to all chats.\n\n"
+        "💡 *Fun Fact*: Every blockchain transaction is like a digital heartbeat. Monitor your node and be a digital hero! 🦸‍♂️\n\n"
+        "🚀 *Happy Monitoring!*",
+        reply_markup=main_menu_keyboard(update.effective_user.id),
+        parse_mode="Markdown"
+    )
+
 def menu_check_status(update, context):
-    """
-    Command function: send a consolidated check status update with node stall info.
-    """
     chat_id = update.effective_chat.id
     addresses = get_addresses_for_chat(chat_id)
     if not addresses:
@@ -303,9 +400,6 @@ def menu_check_status(update, context):
     update.effective_message.reply_text(final_output, parse_mode="Markdown", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def menu_auto_update(update, context):
-    """
-    Command function: start auto update job and send confirmation with explanation.
-    """
     chat_id = update.effective_chat.id
     if not get_addresses_for_chat(chat_id):
         update.effective_message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
@@ -318,9 +412,6 @@ def menu_auto_update(update, context):
     update.effective_message.reply_text("✅ Auto-update started.\n\nExplanation: This command will automatically fetch and send you a consolidated update of your node's balance, status, recent activity, health, and stall status every 5 minutes.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def menu_enable_alerts(update, context):
-    """
-    Command function: start alert job and send confirmation with explanation.
-    """
     chat_id = update.effective_chat.id
     if not get_addresses_for_chat(chat_id):
         update.effective_message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
@@ -333,9 +424,6 @@ def menu_enable_alerts(update, context):
     update.effective_message.reply_text("✅ Alerts enabled.\n\nExplanation: This command monitors your node and sends you an alert if there are no transactions for 15 minutes or if a node stall is detected.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def menu_stop(update, context):
-    """
-    Command function: stop all active jobs and send confirmation.
-    """
     chat_id = update.effective_chat.id
     removed_jobs = 0
     for job_name in (f"auto_update_{chat_id}", f"alert_{chat_id}"):
@@ -349,9 +437,6 @@ def menu_stop(update, context):
         update.effective_message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def announce_start(update, context):
-    """
-    Command function: initiate announcement (admin only).
-    """
     user_id = update.effective_user.id
     if user_id not in ADMIN_IDS:
         update.effective_message.reply_text("❌ You are not authorized to use this command.", reply_markup=main_menu_keyboard(user_id))
@@ -360,9 +445,6 @@ def announce_start(update, context):
     return ANNOUNCE
 
 def announce_receive(update, context):
-    """
-    Conversation function: process announcement message.
-    """
     message = update.effective_message.text
     data = load_data()
     if not data:
