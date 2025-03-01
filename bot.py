@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# Cortensor Node Monitoring Bot (PTB v13.5 Compatible) - Reply Keyboard Version (English)
+# -*- coding: utf-8 -*-
+# Cortensor Node Monitoring Bot (PTB v13.5 Compatible) – Reply Keyboard Version (English)
 
 import logging
 import requests
@@ -25,7 +26,6 @@ load_dotenv()
 TOKEN = os.getenv("TOKEN")
 API_KEY = os.getenv("API_KEY")
 UPDATE_INTERVAL = 300  # 5 minutes
-NODE_STALL_INTERVAL = 300  # 5 minutes
 CORTENSOR_API = "https://dashboard-devnet3.cortensor.network"
 
 # ADMIN_IDS should be a comma-separated list of Telegram user IDs (e.g., "12345678,87654321")
@@ -165,6 +165,7 @@ def auto_update(context: CallbackContext):
         context.bot.send_message(chat_id=chat_id, text="ℹ️ No addresses found! Please use 'Add Address'.")
         return
 
+    # Calculate dynamic delay based on number of addresses
     dynamic_delay = get_dynamic_delay(len(addresses))
     responses = []
     for addr in addresses:
@@ -203,6 +204,7 @@ def alert_check(context: CallbackContext):
         if txs:
             last_tx_time = int(txs[0]['timeStamp'])
             time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
+            # Alert if the latest transaction is older than 15 minutes
             if time_diff > timedelta(minutes=15):
                 context.bot.send_message(
                     chat_id=chat_id,
@@ -216,37 +218,41 @@ def alert_check(context: CallbackContext):
                 parse_mode="Markdown"
             )
 
-def auto_node_stall(context: CallbackContext):
-    job = context.job
-    chat_id = job.context['chat_id']
-    addresses = get_addresses_for_chat(chat_id)[:10]
-    if not addresses:
-        context.bot.send_message(chat_id=chat_id, text="ℹ️ No addresses found! Please use 'Add Address'.")
-        return
-    dynamic_delay = get_dynamic_delay(len(addresses))
-    for addr in addresses:
-        txs = safe_fetch_transactions(addr, dynamic_delay)
-        if txs:
-            latest_25 = txs[:25]
-            if latest_25 and all(tx.get('input', '').lower() == "0x5c36b186" for tx in latest_25):
-                context.bot.send_message(
-                    chat_id=chat_id,
-                    text="🚨 Alert: Node Stall Detected!\nThe last 25 transactions contain only PING (MethodID: 0x5c36b186), indicating your node might be stalled. Please check your node immediately.",
-                    parse_mode="Markdown"
-                )
-
-# ==================== COMMAND HANDLER UNTUK AUTO NODE STALL ====================
-def menu_auto_node_stall(update, context):
+# ==================== COMMAND FOR NODE STALL CHECK ====================
+def menu_node_stall(update, context):
     chat_id = update.effective_chat.id
-    if not get_addresses_for_chat(chat_id):
+    addresses = get_addresses_for_chat(chat_id)
+    if not addresses:
         update.message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
-    current_jobs = context.job_queue.get_jobs_by_name(f"node_stall_auto_{chat_id}")
-    if current_jobs:
-        update.message.reply_text("Auto Node Stall is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    context.job_queue.run_repeating(auto_node_stall, interval=NODE_STALL_INTERVAL, context={'chat_id': chat_id}, name=f"node_stall_auto_{chat_id}")
-    update.message.reply_text("✅ Auto Node Stall enabled! I will monitor your node stall status every 5 minutes.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    dynamic_delay = get_dynamic_delay(len(addresses))
+    responses = []
+    for addr in addresses[:10]:
+        balance = safe_fetch_balance(addr, dynamic_delay)
+        txs = safe_fetch_transactions(addr, dynamic_delay)
+        if txs:
+            last_tx_time = int(txs[0]['timeStamp'])
+            last_activity = get_age(last_tx_time)
+            latest_25 = txs[:25]
+            # Only mark as stall if we have at least 25 transactions and all of them start with the PING method id.
+            if len(txs) >= 25 and all(tx.get('input', '').lower().startswith("0x5c36b186") for tx in latest_25):
+                stall_status = "🚨 Node Stall"
+            else:
+                stall_status = "✅ Normal"
+        else:
+            last_activity = "N/A"
+            stall_status = "No transactions found"
+        responses.append(
+            f"🔹 {shorten_address(addr)}\n"
+            f"💵 Balance: {balance:.4f} ETH\n"
+            f"⏳ Last activity: {last_activity}\n"
+            f"⚠️ Status: {stall_status}\n"
+            f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | "
+            f"📈 [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
+        )
+    update.message.reply_text("🚨 Node Stall Check\n\n" + "\n\n".join(responses) +
+                              f"\n\n⏰ Last update: {format_time(get_wib_time())}",
+                              parse_mode="Markdown", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 # ==================== MAIN MENU KEYBOARD ====================
 def main_menu_keyboard(user_id: int) -> ReplyKeyboardMarkup:
@@ -254,8 +260,8 @@ def main_menu_keyboard(user_id: int) -> ReplyKeyboardMarkup:
         ["Add Address", "Remove Address"],
         ["Check Status", "Node Health"],
         ["Auto Update", "Enable Alerts"],
-        ["Auto Node Stall"],
-        ["Stop", "Help"]
+        ["Stop", "Help"],
+        ["Node Stall"]
     ]
     if user_id in ADMIN_IDS:
         keyboard.append(["Announce"])
@@ -276,10 +282,10 @@ def help_command(update, context):
         "• Remove Address: Remove a wallet address from your list.\n"
         "• Check Status: View node status, balance, and recent activity.\n"
         "• Node Health: Check node health based on the last 25 transactions divided into 5 groups.\n"
-        "• Auto Update: Enable automatic status updates every 5 minutes.\n"
+        "• Node Stall: Warns if the last 25 transactions contain only PING (MethodID: 0x5c36b186), indicating a stalled node.\n"
+        "• Auto Update: Enable automatic updates every 5 minutes.\n"
         "• Enable Alerts: Receive notifications if no transactions in 15 minutes.\n"
-        "• Auto Node Stall: Automatically monitor node stall and alert if detected.\n"
-        "• Stop: Disable all active automatic jobs.\n"
+        "• Stop: Disable auto-updates and alerts.\n"
         "• Announce (Admin only): Send an announcement to all chats.\n\n"
         "💡 Fun Fact: Every blockchain transaction is like a digital heartbeat that keeps the system alive. Monitor your node and be a digital hero!\n\n"
         "🚀 Happy Monitoring!",
@@ -465,18 +471,18 @@ def menu_enable_alerts(update, context):
 def menu_stop(update, context):
     chat_id = update.effective_chat.id
     removed_jobs = 0
-    for job_name in (f"auto_update_{chat_id}", f"alert_{chat_id}", f"node_stall_auto_{chat_id}"):
+    for job_name in (f"auto_update_{chat_id}", f"alert_{chat_id}"):
         jobs = context.job_queue.get_jobs_by_name(job_name)
         for job in jobs:
             job.schedule_removal()
             removed_jobs += 1
     if removed_jobs:
-        update.message.reply_text("✅ Auto-update, alerts, and auto node stall have been stopped.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        update.message.reply_text("✅ Auto-update and alerts have been stopped.", reply_markup=main_menu_keyboard(update.effective_user.id))
     else:
         update.message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def menu_announce(update, context):
-    user_id = update.effective_chat.id
+    user_id = update.effective_user.id
     if user_id not in ADMIN_IDS:
         update.message.reply_text("❌ You are not authorized to use this command.", reply_markup=main_menu_keyboard(user_id))
         return ConversationHandler.END
@@ -524,9 +530,9 @@ def main():
     dp.add_handler(MessageHandler(Filters.regex("^Node Health$"), menu_node_health))
     dp.add_handler(MessageHandler(Filters.regex("^Auto Update$"), menu_auto_update))
     dp.add_handler(MessageHandler(Filters.regex("^Enable Alerts$"), menu_enable_alerts))
-    dp.add_handler(MessageHandler(Filters.regex("^Auto Node Stall$"), menu_auto_node_stall))
     dp.add_handler(MessageHandler(Filters.regex("^Stop$"), menu_stop))
     dp.add_handler(MessageHandler(Filters.regex("^Help$"), help_command))
+    dp.add_handler(MessageHandler(Filters.regex("^Node Stall$"), menu_node_stall))
 
     updater.start_polling()
     logger.info("Bot is running...")
