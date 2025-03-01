@@ -93,7 +93,7 @@ def get_dynamic_delay(num_addresses: int) -> float:
     Enforces a minimum delay of 0.2 seconds.
     """
     base_delay = 0.2  # Minimum delay (max 5 calls/sec)
-    total_calls = 2 * num_addresses  # 2 API calls per address (balance & txlist)
+    total_calls = 2 * num_addresses  # 2 API calls per address: balance & txlist
     if total_calls <= 5:
         return base_delay
     required_total_time = total_calls / 5.0
@@ -523,13 +523,19 @@ def main():
 
     logger.info("Bot is starting...")
 
+    # Add both command and plain-text handlers for these actions
     dp.add_handler(CommandHandler("start", start_command))
     dp.add_handler(CommandHandler("help", help_command))
     dp.add_handler(CommandHandler("auto_update", menu_auto_update))
+    dp.add_handler(MessageHandler(Filters.regex("^Auto Update$"), menu_auto_update))
     dp.add_handler(CommandHandler("auto_node_stall", menu_auto_node_stall))
+    dp.add_handler(MessageHandler(Filters.regex("^Auto Node Stall$"), menu_auto_node_stall))
     dp.add_handler(CommandHandler("enable_alerts", menu_enable_alerts))
+    dp.add_handler(MessageHandler(Filters.regex("^Enable Alerts$"), menu_enable_alerts))
     dp.add_handler(CommandHandler("stop", menu_stop))
+    dp.add_handler(MessageHandler(Filters.regex("^Stop$"), menu_stop))
     dp.add_handler(CommandHandler("check_status", menu_check_status))
+    dp.add_handler(MessageHandler(Filters.regex("^Check Status$"), menu_check_status))
     dp.add_handler(CommandHandler("announce", announce_start))
     dp.add_error_handler(error_handler)
 
