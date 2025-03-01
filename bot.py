@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cortensor Node Monitoring Bot – Telegram Reply Keyboard Version (PTB v13.5 Compatible)
+Cortensor Node Monitoring Bot – Telegram Reply Keyboard Version
 This bot sends node status updates, alerts, and periodic checks via Telegram.
 It logs errors and reports them to admin users, and displays status with emojis and hyperlinks.
 """
@@ -18,7 +18,7 @@ from telegram.ext import (
     MessageHandler,
     Filters,
     ConversationHandler,
-    CallbackContext,
+    CallbackContext
 )
 from dotenv import load_dotenv
 
@@ -34,8 +34,10 @@ ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
 
 # ==================== INITIALIZATION ====================
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                    level=logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 WIB = timezone(timedelta(hours=7))  # WIB (UTC+7)
 
@@ -90,10 +92,10 @@ def get_age(timestamp: int) -> str:
 def get_dynamic_delay(num_addresses: int) -> float:
     """
     Calculate a dynamic delay per API call so that total calls do not exceed 5 per second.
-    A minimum delay of 0.2 seconds is enforced (max 5 calls/sec).
+    Enforces a minimum delay of 0.2 seconds.
     """
-    base_delay = 0.2
-    total_calls = 2 * num_addresses  # 2 API calls per address: balance & txlist
+    base_delay = 0.2  # minimum delay (5 calls per second)
+    total_calls = 2 * num_addresses  # 2 API calls per address (balance & txlist)
     if total_calls <= 5:
         return base_delay
     required_total_time = total_calls / 5.0
@@ -103,7 +105,7 @@ def get_dynamic_delay(num_addresses: int) -> float:
 
 def safe_fetch_balance(address: str, delay: float) -> float:
     """
-    Safely fetch the balance of the address using the Arbiscans API.
+    Safely fetch the balance of the address using Arbiscans API.
     """
     try:
         params = {
@@ -123,7 +125,7 @@ def safe_fetch_balance(address: str, delay: float) -> float:
 
 def safe_fetch_transactions(address: str, delay: float) -> list:
     """
-    Safely fetch the list of transactions for the address using the Arbiscans API.
+    Safely fetch the list of transactions for the address using Arbiscans API.
     """
     try:
         params = {
@@ -164,7 +166,7 @@ def fetch_node_stats(address: str) -> dict:
 def auto_update(context: CallbackContext):
     """
     Send an auto-update message with combined node status, health, and stall info.
-    Emojis and hyperlinks are used for better visualization.
+    Emojis and hyperlinks are used for visualization.
     """
     job = context.job
     chat_id = job.context['chat_id']
@@ -211,7 +213,7 @@ def auto_update(context: CallbackContext):
 def alert_check(context: CallbackContext):
     """
     Check for alerts: if no transactions in the last 15 minutes or a node stall is detected,
-    send an alert message with relevant emojis and hyperlinks.
+    send an alert message with emojis and hyperlinks.
     """
     job = context.job
     chat_id = job.context['chat_id']
@@ -411,7 +413,7 @@ def main():
     dp.add_handler(CommandHandler("announce", announce_start))
     dp.add_error_handler(error_handler)
 
-    # Conversation Handlers for Add/Remove Address and Announce
+    # Conversation Handlers
     conv_add = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Add Address$"), add_address_start)],
         states={
