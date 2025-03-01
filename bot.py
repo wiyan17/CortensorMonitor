@@ -135,7 +135,7 @@ def safe_fetch_transactions(address: str, delay: float) -> list:
         if isinstance(result, list) and result and isinstance(result[0], dict):
             tx_list = result
         else:
-            logger.error(f"Unexpected transactions format for {address}: {result}")
+            logger.error(f"Unexpected transactions format for address {address}: {result}")
             tx_list = []
     except Exception as e:
         logger.error(f"Tx error for {address}: {e}")
@@ -177,7 +177,6 @@ def auto_update(context: CallbackContext):
             status = "🟢 Online" if time_diff <= timedelta(minutes=5) else "🔴 Offline"
             last_activity = get_age(last_tx_time)
             latest_25 = txs[:25]
-            # Health: Divide the latest 25 transactions into 5 groups
             groups = [latest_25[i*5:(i+1)*5] for i in range(5)]
             health_list = []
             for group in groups:
@@ -186,7 +185,6 @@ def auto_update(context: CallbackContext):
                 else:
                     health_list.append("⬜")
             health_status = " ".join(health_list)
-            # Stall check: if at least 25 transactions and all start with the PING method id.
             stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input', '').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
         else:
             status = "🔴 Offline"
@@ -420,6 +418,57 @@ def menu_check_status(update, context):
     final_output = "*Check Status*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
     update.message.reply_text(final_output, parse_mode="Markdown", reply_markup=main_menu_keyboard(update.effective_user.id))
 
+# ---------- Command functions to start jobs ----------
+
+def menu_auto_update(update, context):
+    chat_id = update.effective_chat.id
+    if not get_addresses_for_chat(chat_id):
+        update.message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    current_jobs = context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}")
+    if current_jobs:
+        update.message.reply_text("Auto-update is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    context.job_queue.run_repeating(auto_update, interval=UPDATE_INTERVAL, context={'chat_id': chat_id}, name=f"auto_update_{chat_id}")
+    update.message.reply_text("✅ Auto-update started.", reply_markup=main_menu_keyboard(update.effective_user.id))
+
+def menu_auto_node_stall(update, context):
+    chat_id = update.effective_chat.id
+    if not get_addresses_for_chat(chat_id):
+        update.message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    current_jobs = context.job_queue.get_jobs_by_name(f"auto_node_stall_{chat_id}")
+    if current_jobs:
+        update.message.reply_text("Auto Node Stall is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    context.job_queue.run_repeating(auto_node_stall, interval=UPDATE_INTERVAL, context={'chat_id': chat_id}, name=f"auto_node_stall_{chat_id}")
+    update.message.reply_text("✅ Auto Node Stall started.", reply_markup=main_menu_keyboard(update.effective_user.id))
+
+def menu_enable_alerts(update, context):
+    chat_id = update.effective_chat.id
+    if not get_addresses_for_chat(chat_id):
+        update.message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    current_jobs = context.job_queue.get_jobs_by_name(f"alert_{chat_id}")
+    if current_jobs:
+        update.message.reply_text("Alerts are already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    context.job_queue.run_repeating(alert_check, interval=900, context={'chat_id': chat_id}, name=f"alert_{chat_id}")
+    update.message.reply_text("✅ Alerts enabled.", reply_markup=main_menu_keyboard(update.effective_user.id))
+
+def menu_stop(update, context):
+    chat_id = update.effective_chat.id
+    removed_jobs = 0
+    for job_name in (f"auto_update_{chat_id}", f"alert_{chat_id}", f"auto_node_stall_{chat_id}"):
+        jobs = context.job_queue.get_jobs_by_name(job_name)
+        for job in jobs:
+            job.schedule_removal()
+            removed_jobs += 1
+    if removed_jobs:
+        update.message.reply_text("✅ Auto-update, alerts, and auto node stall have been stopped.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    else:
+        update.message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
+
 # ==================== MAIN FUNCTION ====================
 def main():
     updater = Updater(TOKEN)
@@ -430,7 +479,7 @@ def main():
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("help", help_command))
     dp.add_handler(CommandHandler("auto_update", menu_auto_update))
-    dp.add_handler(CommandHandler("auto_node_stall", auto_node_stall))
+    dp.add_handler(CommandHandler("auto_node_stall", menu_auto_node_stall))
     dp.add_handler(CommandHandler("enable_alerts", menu_enable_alerts))
     dp.add_handler(CommandHandler("stop", menu_stop))
     dp.add_handler(CommandHandler("check_status", menu_check_status))
