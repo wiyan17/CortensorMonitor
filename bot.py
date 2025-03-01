@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Cortensor Node Monitoring Bot (PTB v13.5 Compatible) – Reply Keyboard Version (English)
-This bot sends node status updates, alerts, and periodic checks via Telegram.
-It logs errors and reports them to admin users, and displays status with emojis and hyperlinks.
-"""
+# Cortensor Node Monitoring Bot (PTB v13.5 Compatible) – Reply Keyboard Version (English)
+# This bot sends node status updates, alerts, and periodic checks via Telegram.
+# It logs errors and reports them to admin users, displaying status with emojis and hyperlinks.
 
 import logging
 import requests
@@ -13,11 +11,9 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import (Updater, CommandHandler, MessageHandler, Filters,
-                          ConversationHandler, CallbackContext)
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler, CallbackContext
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv()
 
 # ==================== CONFIGURATION ====================
@@ -33,8 +29,7 @@ ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
 
 # ==================== INITIALIZATION ====================
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                    level=logging.INFO)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 WIB = timezone(timedelta(hours=7))  # WIB timezone (UTC+7)
 
@@ -487,7 +482,7 @@ def main():
     logger.info("Bot is running... 🚀")
     updater.idle()
 
-# Fallback start command if needed
+# Fallback start command
 def start_command(update, context):
     user_id = update.effective_user.id
     update.message.reply_text(
