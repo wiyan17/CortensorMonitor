@@ -11,14 +11,7 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import (
-    Updater,
-    CommandHandler,
-    MessageHandler,
-    Filters,
-    ConversationHandler,
-    CallbackContext,
-)
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler, CallbackContext
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -37,9 +30,7 @@ ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
 
 # ==================== INITIALIZATION ====================
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 WIB = timezone(timedelta(hours=7))  # WIB timezone (UTC+7)
 
@@ -142,7 +133,7 @@ def safe_fetch_transactions(address: str, delay: float) -> list:
         if isinstance(result, list) and result and isinstance(result[0], dict):
             tx_list = result
         else:
-            logger.error(f"Unexpected transactions format for address {address}: {result}")
+            logger.error(f"Unexpected transactions format for {address}: {result}")
             tx_list = []
     except Exception as e:
         logger.error(f"Tx error for {address}: {e}")
@@ -176,7 +167,6 @@ def auto_update(context: CallbackContext):
     if not addresses:
         context.bot.send_message(chat_id=chat_id, text="ℹ️ No addresses found! Please use 'Add Address'.")
         return
-
     dynamic_delay = get_dynamic_delay(len(addresses))
     output_lines = []
     for addr in addresses:
@@ -416,12 +406,29 @@ def menu_stop(update, context):
     else:
         update.message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
-# ==================== ERROR HANDLER ====================
-def error_handler(update, context):
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
-    error_text = f"⚠️ An error occurred: {context.error}"
-    for admin_id in ADMIN_IDS:
-        context.bot.send_message(chat_id=admin_id, text=error_text)
+def announce_start(update, context):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        update.message.reply_text("❌ You are not authorized to use this command.", reply_markup=main_menu_keyboard(user_id))
+        return ConversationHandler.END
+    update.message.reply_text("Please send the announcement message:", reply_markup=ReplyKeyboardRemove())
+    return ANNOUNCE
+
+def announce_receive(update, context):
+    message = update.message.text
+    data = load_data()
+    if not data:
+        update.message.reply_text("No chats found to announce to.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    count = 0
+    for chat in data.keys():
+        try:
+            context.bot.send_message(chat_id=int(chat), text=message)
+            count += 1
+        except Exception as e:
+            logger.error(f"Error sending announcement to chat {chat}: {e}")
+    update.message.reply_text(f"📣 Announcement sent to {count} chats.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    return ConversationHandler.END
 
 # ==================== MAIN FUNCTION ====================
 def main():
