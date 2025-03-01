@@ -196,7 +196,7 @@ def auto_update(context: CallbackContext):
             f"Balance: `{balance:.4f} ETH` | Status: {status}\n"
             f"Last Activity: `{last_activity}`\n"
             f"Health: {health_status} | Stall: {stall_status}\n"
-            f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3', 'sepolia.arbiscan.io/address')}/{addr})"
+            f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3','sepolia.arbiscan.io/address')}/{addr}) | [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
         )
     final_output = "*Auto Update*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
     context.bot.send_message(chat_id=chat_id, text=final_output, parse_mode="Markdown")
@@ -222,12 +222,12 @@ def alert_check(context: CallbackContext):
                     msg_lines.append("- No transactions in the last 15 minutes.")
                 if stall_condition:
                     msg_lines.append("- Node stall detected (only PING transactions in the last 25).")
-                msg_lines.append(f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3', 'sepolia.arbiscan.io/address')}/{addr})")
+                msg_lines.append(f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3','sepolia.arbiscan.io/address')}/{addr}) | [Dashboard]({CORTENSOR_API}/nodestats/{addr})")
                 context.bot.send_message(chat_id=chat_id, text="\n".join(msg_lines), parse_mode="Markdown")
         else:
             context.bot.send_message(
                 chat_id=chat_id,
-                text=f"🚨 *Alert for {shorten_address(addr)}*:\n- No transactions found!\n[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3', 'sepolia.arbiscan.io/address')}/{addr})",
+                text=f"🚨 *Alert for {shorten_address(addr)}*:\n- No transactions found!\n[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3','sepolia.arbiscan.io/address')}/{addr}) | [Dashboard]({CORTENSOR_API}/nodestats/{addr})",
                 parse_mode="Markdown"
             )
 
@@ -259,7 +259,7 @@ def auto_node_stall(context: CallbackContext):
             f"Balance: `{balance:.4f} ETH`\n"
             f"Last Activity: `{last_activity}`\n"
             f"Stall: {stall_status}\n"
-            f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3', 'sepolia.arbiscan.io/address')}/{addr})"
+            f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3','sepolia.arbiscan.io/address')}/{addr}) | [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
         )
     final_output = "*Auto Node Stall Check*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
     context.bot.send_message(chat_id=chat_id, text=final_output, parse_mode="Markdown")
@@ -413,13 +413,12 @@ def menu_check_status(update, context):
             f"Balance: `{balance:.4f} ETH` | Status: {status}\n"
             f"Last Activity: `{last_activity}`\n"
             f"Health: {health_status} | Stall: {stall_status}\n"
-            f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3', 'sepolia.arbiscan.io/address')}/{addr})"
+            f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3','sepolia.arbiscan.io/address')}/{addr}) | [Dashboard]({CORTENSOR_API}/nodestats/{addr})"
         )
     final_output = "*Check Status*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
     update.message.reply_text(final_output, parse_mode="Markdown", reply_markup=main_menu_keyboard(update.effective_user.id))
 
-# ---------- Command functions to start jobs ----------
-
+# ---------- Command Functions to Start Jobs ----------
 def menu_auto_update(update, context):
     chat_id = update.effective_chat.id
     if not get_addresses_for_chat(chat_id):
@@ -469,6 +468,13 @@ def menu_stop(update, context):
     else:
         update.message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
+# ==================== ERROR HANDLER ====================
+def error_handler(update, context):
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+    error_text = f"⚠️ An error occurred: {context.error}"
+    for admin_id in ADMIN_IDS:
+        context.bot.send_message(chat_id=admin_id, text=error_text)
+
 # ==================== MAIN FUNCTION ====================
 def main():
     updater = Updater(TOKEN)
@@ -484,6 +490,7 @@ def main():
     dp.add_handler(CommandHandler("stop", menu_stop))
     dp.add_handler(CommandHandler("check_status", menu_check_status))
     dp.add_handler(CommandHandler("announce", announce_start))
+    dp.add_error_handler(error_handler)
 
     conv_add = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Add Address$"), add_address_start)],
