@@ -89,14 +89,17 @@ def get_age(timestamp: int) -> str:
 def get_dynamic_delay(num_addresses: int) -> float:
     """
     Calculate a dynamic delay per API call so that total calls do not exceed 5 per second.
-    Assumption: Each address requires 2 API calls (balance & txlist).
+    We also enforce a minimum delay of 0.2 seconds (i.e. max 5 calls/sec) even when the number
+    of addresses is low.
     """
-    total_calls = 2 * num_addresses
+    base_delay = 0.2  # Minimum delay in seconds
+    total_calls = 2 * num_addresses  # 2 calls per address: balance & txlist
     if total_calls <= 5:
-        return 0.0
-    required_total_time = total_calls / 5.0  # seconds
+        return base_delay
+    required_total_time = total_calls / 5.0  # in seconds
     intervals = total_calls - 1
-    return required_total_time / intervals
+    dynamic_delay = required_total_time / intervals
+    return max(dynamic_delay, base_delay)
 
 def safe_fetch_balance(address: str, delay: float) -> float:
     """
@@ -159,6 +162,7 @@ def fetch_node_stats(address: str) -> dict:
         return {}
 
 # ==================== JOB FUNCTIONS ====================
+
 def auto_update(context: CallbackContext):
     """
     Send an auto-update message with combined node status, health, and stall info.
@@ -480,6 +484,30 @@ def menu_stop(update, context):
         update.message.reply_text("✅ Auto-update, alerts, and auto node stall have been stopped.", reply_markup=main_menu_keyboard(update.effective_user.id))
     else:
         update.message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
+
+def announce_start(update, context):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        update.message.reply_text("❌ You are not authorized to use this command.", reply_markup=main_menu_keyboard(user_id))
+        return ConversationHandler.END
+    update.message.reply_text("Please send the announcement message:", reply_markup=ReplyKeyboardRemove())
+    return ANNOUNCE
+
+def announce_receive(update, context):
+    message = update.message.text
+    data = load_data()
+    if not data:
+        update.message.reply_text("No chats found to announce to.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    count = 0
+    for chat in data.keys():
+        try:
+            context.bot.send_message(chat_id=int(chat), text=message)
+            count += 1
+        except Exception as e:
+            logger.error(f"Error sending announcement to chat {chat}: {e}")
+    update.message.reply_text(f"📣 Announcement sent to {count} chats.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    return ConversationHandler.END
 
 # ==================== MAIN FUNCTION ====================
 def main():
