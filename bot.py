@@ -197,7 +197,6 @@ def auto_update(context: CallbackContext):
     delay = get_dynamic_delay(len(addresses))
     output_lines = []
     for addr in addresses:
-        # Extra emoji for address output
         addr_display = f"🔑 {shorten_address(addr)}"
         balance = safe_fetch_balance(addr, delay)
         txs = safe_fetch_transactions(addr, delay)
@@ -210,12 +209,12 @@ def auto_update(context: CallbackContext):
             groups = [latest_25[i*5:(i+1)*5] for i in range(5)]
             health_list = [("🟩" if all(tx.get('isError') == '0' for tx in group) else "🟥") if group else "⬜" for group in groups]
             health_status = " ".join(health_list)
-            stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input', '').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
+            stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
         else:
             status = "🔴 Offline"
             last_activity = "N/A"
             health_status = "No transactions"
-            stall_status = "No transactions"
+            stall_status = "N/A"
         output_lines.append(
             f"*{addr_display}*\n"
             f"💰 Balance: `{balance:.4f} ETH` | Status: {status}\n"
@@ -378,6 +377,13 @@ def announce_receive(update, context):
             logger.error(f"Error sending announcement to chat {chat}: {e}")
     update.effective_message.reply_text(f"📣 Announcement sent to {count} chats.", reply_markup=main_menu_keyboard(update.effective_user.id))
     return ConversationHandler.END
+
+# -------------------- ERROR HANDLER --------------------
+def error_handler(update, context):
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+    error_text = f"⚠️ An error occurred: {context.error}"
+    for admin_id in ADMIN_IDS:
+        context.bot.send_message(chat_id=admin_id, text=error_text)
 
 # -------------------- COMMAND HANDLERS --------------------
 def start_command(update, context):
