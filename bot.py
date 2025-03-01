@@ -34,8 +34,9 @@ ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
 
 # -------------------- INITIALIZATION --------------------
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                    level=logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 WIB = timezone(timedelta(hours=7))  # WIB (UTC+7)
 
@@ -260,6 +261,7 @@ def alert_check(context: CallbackContext):
                 parse_mode="Markdown"
             )
 
+# -------------------- COMMAND FUNCTIONS --------------------
 def menu_check_status(update, context):
     """
     Command function: send a consolidated check status update with node stall info.
