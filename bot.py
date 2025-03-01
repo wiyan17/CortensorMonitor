@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # Cortensor Node Monitoring Bot (PTB v13.5 Compatible) – Reply Keyboard Version (English)
 # This bot sends node status updates, alerts, and periodic checks via Telegram.
-# It now includes detailed logging, error reporting to admins, and enhanced output formatting with emojis and hyperlinks.
+# It logs errors and reports them to admin users, and includes enhanced output formatting with emojis and hyperlinks.
 
 import logging
 import requests
@@ -93,7 +93,7 @@ def get_age(timestamp: int) -> str:
 # ==================== DYNAMIC RATE LIMIT HELPER ====================
 def get_dynamic_delay(num_addresses: int) -> float:
     """
-    Calculate dynamic delay per API call so that total calls do not exceed 5 per second.
+    Calculate a dynamic delay per API call so that total calls do not exceed 5 per second.
     Assumption: Each address requires 2 API calls (balance & txlist).
     """
     total_calls = 2 * num_addresses
@@ -226,18 +226,21 @@ def alert_check(context: CallbackContext):
                     msg_lines.append("⏱️ No transactions in the last 15 minutes.")
                 if stall_condition:
                     msg_lines.append("⚠️ Node stall detected (only PING transactions in the last 25).")
-                msg_lines.append(f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3','sepolia.arbiscan.io/address')}/{addr}) | [Dashboard]({CORTENSOR_API}/nodestats/{addr})")
+                msg_lines.append(f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3','sepolia.arbiscan.io/address')}/{addr}) | "
+                                 f"[Dashboard]({CORTENSOR_API}/nodestats/{addr})")
                 context.bot.send_message(chat_id=chat_id, text="\n".join(msg_lines), parse_mode="Markdown")
         else:
             context.bot.send_message(
                 chat_id=chat_id,
-                text=f"🚨 *Alert for {shorten_address(addr)}*:\n- No transactions found!\n[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3','sepolia.arbiscan.io/address')}/{addr}) | [Dashboard]({CORTENSOR_API}/nodestats/{addr})",
+                text=f"🚨 *Alert for {shorten_address(addr)}*:\n- No transactions found!\n"
+                     f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3','sepolia.arbiscan.io/address')}/{addr}) | "
+                     f"[Dashboard]({CORTENSOR_API}/nodestats/{addr})",
                 parse_mode="Markdown"
             )
 
 def auto_node_stall(context: CallbackContext):
     """
-    Periodically check for node stall only and send a concise update with emojis.
+    Periodically check for node stall only and send a concise update with emojis and hyperlinks.
     """
     job = context.job
     chat_id = job.context['chat_id']
@@ -280,6 +283,13 @@ def main_menu_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     if user_id in ADMIN_IDS:
         keyboard.append(["Announce"])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+
+# ==================== ERROR HANDLER ====================
+def error_handler(update, context):
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+    error_text = f"⚠️ An error occurred: {context.error}"
+    for admin_id in ADMIN_IDS:
+        context.bot.send_message(chat_id=admin_id, text=error_text)
 
 # ==================== COMMAND HANDLERS ====================
 def start_command(update, context):
