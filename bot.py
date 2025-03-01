@@ -197,7 +197,7 @@ def auto_update(context: CallbackContext):
     delay = get_dynamic_delay(len(addresses))
     output_lines = []
     for addr in addresses:
-        # Add extra emoji for address (e.g., a key icon)
+        # Extra emoji for address output
         addr_display = f"🔑 {shorten_address(addr)}"
         balance = safe_fetch_balance(addr, delay)
         txs = safe_fetch_transactions(addr, delay)
@@ -210,8 +210,7 @@ def auto_update(context: CallbackContext):
             groups = [latest_25[i*5:(i+1)*5] for i in range(5)]
             health_list = [("🟩" if all(tx.get('isError') == '0' for tx in group) else "🟥") if group else "⬜" for group in groups]
             health_status = " ".join(health_list)
-            # Include node stall info: if all of the last 25 transactions are PING (MethodID: 0x5c36b186)
-            stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
+            stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input', '').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
         else:
             status = "🔴 Offline"
             last_activity = "N/A"
@@ -264,7 +263,7 @@ def alert_check(context: CallbackContext):
 
 def menu_check_status(update, context):
     """
-    Command function: send a consolidated check status update that includes node stall info.
+    Command function: send a consolidated check status update with node stall info.
     """
     chat_id = update.effective_chat.id
     addresses = get_addresses_for_chat(chat_id)
@@ -274,7 +273,6 @@ def menu_check_status(update, context):
     delay = get_dynamic_delay(len(addresses))
     output_lines = []
     for addr in addresses[:10]:
-        # Add extra emoji for address output
         addr_display = f"🔑 {shorten_address(addr)}"
         balance = safe_fetch_balance(addr, delay)
         txs = safe_fetch_transactions(addr, delay)
@@ -292,7 +290,7 @@ def menu_check_status(update, context):
             status = "🔴 Offline"
             last_activity = "N/A"
             health_status = "No transactions"
-            stall_status = "No transactions"
+            stall_status = "N/A"
         output_lines.append(
             f"*{addr_display}*\n"
             f"💰 Balance: `{balance:.4f} ETH` | Status: {status}\n"
@@ -318,7 +316,7 @@ def menu_auto_update(update, context):
         update.effective_message.reply_text("Auto-update is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
     context.job_queue.run_repeating(auto_update, interval=UPDATE_INTERVAL, context={'chat_id': chat_id}, name=f"auto_update_{chat_id}")
-    update.effective_message.reply_text("✅ Auto-update started.\n\nExplanation: This command automatically fetches and sends you a consolidated update of your node's balance, status, recent activity, health, and stall status every 5 minutes.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    update.effective_message.reply_text("✅ Auto-update started.\n\nExplanation: This command will automatically fetch and send you a consolidated update of your node's balance, status, recent activity, health, and stall status every 5 minutes.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def menu_enable_alerts(update, context):
     """
