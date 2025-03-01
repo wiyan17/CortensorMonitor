@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Cortensor Node Monitoring Bot – Telegram Reply Keyboard Version
+
 This bot sends node status updates, alerts, and periodic checks via Telegram.
 It logs errors and reports them to admin users, and displays status with emojis and hyperlinks.
 """
@@ -12,9 +13,17 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler, CallbackContext
+from telegram.ext import (
+    Updater,
+    CommandHandler,
+    MessageHandler,
+    Filters,
+    ConversationHandler,
+    CallbackContext
+)
 from dotenv import load_dotenv
 
+# Load environment variables
 load_dotenv()
 
 # -------------------- CONFIGURATION --------------------
@@ -83,8 +92,8 @@ def get_dynamic_delay(num_addresses: int) -> float:
     Calculate a dynamic delay per API call so that total calls do not exceed 5 per second.
     Enforces a minimum delay of 0.2 seconds.
     """
-    base_delay = 0.2  # Minimum delay (max 5 calls per second)
-    total_calls = 2 * num_addresses  # 2 API calls per address: balance & txlist
+    base_delay = 0.2  # Minimum delay (max 5 calls/sec)
+    total_calls = 2 * num_addresses  # 2 API calls per address (balance & txlist)
     if total_calls <= 5:
         return base_delay
     required_total_time = total_calls / 5.0
@@ -95,7 +104,7 @@ def get_dynamic_delay(num_addresses: int) -> float:
 # -------------------- API FUNCTIONS --------------------
 def safe_fetch_balance(address: str, delay: float) -> float:
     """
-    Safely fetch the balance of the address using Arbiscans API.
+    Safely fetch the balance of the address using the Arbiscans API.
     """
     try:
         params = {
@@ -115,7 +124,7 @@ def safe_fetch_balance(address: str, delay: float) -> float:
 
 def safe_fetch_transactions(address: str, delay: float) -> list:
     """
-    Safely fetch the list of transactions for the address using Arbiscans API.
+    Safely fetch the list of transactions for the address using the Arbiscans API.
     """
     try:
         params = {
@@ -155,13 +164,13 @@ def fetch_node_stats(address: str) -> dict:
 # -------------------- JOB FUNCTIONS --------------------
 def auto_update(context: CallbackContext):
     """
-    Send an auto-update message with combined node status, health, and stall info.
+    Job function: send an auto-update message with combined node status, health, and stall info.
     """
     job = context.job
     chat_id = job.context['chat_id']
     addresses = get_addresses_for_chat(chat_id)[:10]
     if not addresses:
-        context.bot.send_message(chat_id=chat_id, text="ℹ️ No addresses found! Please use 'Add Address'.")
+        context.bot.send_message(chat_id=chat_id, text="ℹ️ No addresses found! Please add one using 'Add Address'.")
         return
     delay = get_dynamic_delay(len(addresses))
     output_lines = []
@@ -182,7 +191,7 @@ def auto_update(context: CallbackContext):
                 else:
                     health_list.append("⬜")
             health_status = " ".join(health_list)
-            stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
+            stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input', '').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
         else:
             status = "🔴 Offline"
             last_activity = "N/A"
@@ -201,7 +210,7 @@ def auto_update(context: CallbackContext):
 
 def alert_check(context: CallbackContext):
     """
-    Check for alerts and send a message if no transactions in the last 15 minutes or if a node stall is detected.
+    Job function: check for alerts and send an alert message if conditions are met.
     """
     job = context.job
     chat_id = job.context['chat_id']
@@ -234,7 +243,7 @@ def alert_check(context: CallbackContext):
 
 def auto_node_stall(context: CallbackContext):
     """
-    Send a concise update for node stall status.
+    Job function: send a concise update for node stall status.
     """
     job = context.job
     chat_id = job.context['chat_id']
@@ -285,32 +294,7 @@ def error_handler(update, context):
     for admin_id in ADMIN_IDS:
         context.bot.send_message(chat_id=admin_id, text=error_text)
 
-# -------------------- COMMAND HANDLERS --------------------
-def start_command(update, context):
-    user_id = update.effective_user.id
-    update.message.reply_text(
-        "👋 Welcome to Cortensor Node Monitoring Bot!\n\nI am here to help you monitor your node status easily. Choose an option from the menu below.",
-        reply_markup=main_menu_keyboard(user_id)
-    )
-
-def help_command(update, context):
-    update.message.reply_text(
-        "📖 *Cortensor Node Monitoring Bot Guide*\n\n"
-        "• *Add Address*: ➕ Add a wallet address.\n"
-        "• *Remove Address*: ➖ Remove a wallet address from your list.\n"
-        "• *Check Status*: 📊 View combined node status, health, & stall info.\n"
-        "• *Auto Update*: 🔄 Enable automatic updates every 5 minutes with combined info.\n"
-        "• *Enable Alerts*: 🔔 Receive notifications if no transactions in 15 minutes or if a node stall is detected.\n"
-        "• *Auto Node Stall*: ⏱️ Periodically check for node stall only.\n"
-        "• *Stop*: ⛔ Disable auto-updates and alerts.\n"
-        "• *Announce* (Admin only): 📣 Send an announcement to all chats.\n\n"
-        "💡 *Fun Fact*: Every blockchain transaction is like a digital heartbeat. Monitor your node and be a digital hero! 🦸‍♂️\n\n"
-        "🚀 *Happy Monitoring!*",
-        reply_markup=main_menu_keyboard(update.effective_user.id),
-        parse_mode="Markdown"
-    )
-
-# -------------------- CONVERSATION HANDLERS --------------------
+# -------------------- CONVERSATION HANDLER FUNCTIONS --------------------
 def add_address_start(update, context):
     update.message.reply_text("Please send me the wallet address to add:", reply_markup=ReplyKeyboardRemove())
     return ADD_ADDRESS
@@ -358,6 +342,138 @@ def remove_address_receive(update, context):
     update_addresses_for_chat(chat_id, addresses)
     update.message.reply_text(f"✅ Removed {shorten_address(choice)} from your list!", reply_markup=main_menu_keyboard(update.effective_user.id))
     return ConversationHandler.END
+
+def announce_start(update, context):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        update.message.reply_text("❌ You are not authorized to use this command.", reply_markup=main_menu_keyboard(user_id))
+        return ConversationHandler.END
+    update.message.reply_text("Please send the announcement message:", reply_markup=ReplyKeyboardRemove())
+    return ANNOUNCE
+
+def announce_receive(update, context):
+    message = update.message.text
+    data = load_data()
+    if not data:
+        update.message.reply_text("No chats found to announce to.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    count = 0
+    for chat in data.keys():
+        try:
+            context.bot.send_message(chat_id=int(chat), text=message)
+            count += 1
+        except Exception as e:
+            logger.error(f"Error sending announcement to chat {chat}: {e}")
+    update.message.reply_text(f"📣 Announcement sent to {count} chats.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    return ConversationHandler.END
+
+# -------------------- COMMAND HANDLERS --------------------
+def start_command(update, context):
+    user_id = update.effective_user.id
+    update.message.reply_text("👋 Welcome to Cortensor Node Monitoring Bot!\n\nI am here to help you monitor your node status easily. Choose an option from the menu below.", reply_markup=main_menu_keyboard(user_id))
+
+def help_command(update, context):
+    update.message.reply_text(
+        "📖 *Cortensor Node Monitoring Bot Guide*\n\n"
+        "• *Add Address*: ➕ Add a wallet address.\n"
+        "• *Remove Address*: ➖ Remove a wallet address from your list.\n"
+        "• *Check Status*: 📊 View combined node status, health, & stall info.\n"
+        "• *Auto Update*: 🔄 Enable automatic updates every 5 minutes with combined info.\n"
+        "• *Enable Alerts*: 🔔 Receive notifications if no transactions in 15 minutes or if a node stall is detected.\n"
+        "• *Auto Node Stall*: ⏱️ Periodically check for node stall only.\n"
+        "• *Stop*: ⛔ Disable auto-updates and alerts.\n"
+        "• *Announce* (Admin only): 📣 Send an announcement to all chats.\n\n"
+        "💡 *Fun Fact*: Every blockchain transaction is like a digital heartbeat. Monitor your node and be a digital hero! 🦸‍♂️\n\n"
+        "🚀 *Happy Monitoring!*",
+        reply_markup=main_menu_keyboard(update.effective_user.id),
+        parse_mode="Markdown"
+    )
+
+def menu_check_status(update, context):
+    chat_id = update.effective_chat.id
+    addresses = get_addresses_for_chat(chat_id)
+    if not addresses:
+        update.message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    delay = get_dynamic_delay(len(addresses))
+    output_lines = []
+    for addr in addresses[:10]:
+        balance = safe_fetch_balance(addr, delay)
+        txs = safe_fetch_transactions(addr, delay)
+        if txs:
+            last_tx_time = int(txs[0]['timeStamp'])
+            time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
+            status = "🟢 Online" if time_diff <= timedelta(minutes=5) else "🔴 Offline"
+            last_activity = get_age(last_tx_time)
+            latest_25 = txs[:25]
+            groups = [latest_25[i*5:(i+1)*5] for i in range(5)]
+            health_list = [("🟩" if all(tx.get('isError') == '0' for tx in group) else "🟥") if group else "⬜" for group in groups]
+            health_status = " ".join(health_list)
+            stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
+        else:
+            status = "🔴 Offline"
+            last_activity = "N/A"
+            health_status = "No transactions"
+            stall_status = "No transactions"
+        output_lines.append(
+            f"*{shorten_address(addr)}*\n"
+            f"💰 Balance: `{balance:.4f} ETH` | Status: {status}\n"
+            f"⏱️ Last Activity: `{last_activity}`\n"
+            f"🩺 Health: {health_status} | Stall: {stall_status}\n"
+            f"[Arbiscan]({CORTENSOR_API.replace('dashboard-devnet3','sepolia.arbiscan.io/address')}/{addr}) | "
+            f"[Dashboard]({CORTENSOR_API}/nodestats/{addr})"
+        )
+    final_output = "*Check Status*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
+    update.message.reply_text(final_output, parse_mode="Markdown", reply_markup=main_menu_keyboard(update.effective_user.id))
+
+def menu_auto_update(update, context):
+    chat_id = update.effective_chat.id
+    if not get_addresses_for_chat(chat_id):
+        update.message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    current_jobs = context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}")
+    if current_jobs:
+        update.message.reply_text("Auto-update is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    context.job_queue.run_repeating(auto_update, interval=UPDATE_INTERVAL, context={'chat_id': chat_id}, name=f"auto_update_{chat_id}")
+    update.message.reply_text("✅ Auto-update started.", reply_markup=main_menu_keyboard(update.effective_user.id))
+
+def menu_auto_node_stall(update, context):
+    chat_id = update.effective_chat.id
+    if not get_addresses_for_chat(chat_id):
+        update.message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    current_jobs = context.job_queue.get_jobs_by_name(f"auto_node_stall_{chat_id}")
+    if current_jobs:
+        update.message.reply_text("Auto Node Stall is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    context.job_queue.run_repeating(auto_node_stall, interval=UPDATE_INTERVAL, context={'chat_id': chat_id}, name=f"auto_node_stall_{chat_id}")
+    update.message.reply_text("✅ Auto Node Stall started.", reply_markup=main_menu_keyboard(update.effective_user.id))
+
+def menu_enable_alerts(update, context):
+    chat_id = update.effective_chat.id
+    if not get_addresses_for_chat(chat_id):
+        update.message.reply_text("No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    current_jobs = context.job_queue.get_jobs_by_name(f"alert_{chat_id}")
+    if current_jobs:
+        update.message.reply_text("Alerts are already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    context.job_queue.run_repeating(alert_check, interval=900, context={'chat_id': chat_id}, name=f"alert_{chat_id}")
+    update.message.reply_text("✅ Alerts enabled.", reply_markup=main_menu_keyboard(update.effective_user.id))
+
+def menu_stop(update, context):
+    chat_id = update.effective_chat.id
+    removed_jobs = 0
+    for job_name in (f"auto_update_{chat_id}", f"alert_{chat_id}", f"auto_node_stall_{chat_id}"):
+        jobs = context.job_queue.get_jobs_by_name(job_name)
+        for job in jobs:
+            job.schedule_removal()
+            removed_jobs += 1
+    if removed_jobs:
+        update.message.reply_text("✅ Auto-update, alerts, and auto node stall have been stopped.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    else:
+        update.message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def announce_start(update, context):
     user_id = update.effective_user.id
@@ -435,10 +551,7 @@ def main():
 
 def start_command(update, context):
     user_id = update.effective_user.id
-    update.message.reply_text(
-        "👋 Welcome to Cortensor Node Monitoring Bot!\n\nI am here to help you monitor your node status easily. Choose an option from the menu below.",
-        reply_markup=main_menu_keyboard(user_id)
-    )
+    update.message.reply_text("👋 Welcome to Cortensor Node Monitoring Bot!\n\nI am here to help you monitor your node status easily. Choose an option from the menu below.", reply_markup=main_menu_keyboard(user_id))
 
 if __name__ == "__main__":
     main()
