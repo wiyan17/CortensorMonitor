@@ -27,7 +27,8 @@ ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
 
 # -------------------- INITIALIZATION --------------------
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                    level=logging.INFO)
 logger = logging.getLogger(__name__)
 WIB = timezone(timedelta(hours=7))  # WIB (UTC+7)
 
@@ -95,7 +96,7 @@ def get_dynamic_delay(num_addresses: int) -> float:
     Calculate a dynamic delay per API call so that total calls do not exceed 0.5 API calls per second.
     This enforces a minimum delay of 2.0 seconds between calls.
     """
-    base_delay = 2.0  # Minimum delay for 0.5 calls/sec (1 call every 2 sec)
+    base_delay = 2.0  # 1 call every 2 seconds
     total_calls = 2 * num_addresses  # 2 API calls per address: balance & txlist
     if total_calls <= 0.5:
         return base_delay
@@ -113,7 +114,13 @@ def safe_fetch_balance(address: str, delay: float) -> float:
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            params = {"module": "account", "action": "balance", "address": address, "tag": "latest", "apikey": API_KEY}
+            params = {
+                "module": "account",
+                "action": "balance",
+                "address": address,
+                "tag": "latest",
+                "apikey": API_KEY
+            }
             response = requests.get("https://api-sepolia.arbiscan.io/api", params=params, timeout=10)
             json_resp = response.json()
             result_str = json_resp.get("result", "")
@@ -141,7 +148,15 @@ def safe_fetch_transactions(address: str, delay: float) -> list:
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            params = {"module": "account", "action": "txlist", "address": address, "sort": "desc", "page": 1, "offset": 100, "apikey": API_KEY}
+            params = {
+                "module": "account",
+                "action": "txlist",
+                "address": address,
+                "sort": "desc",
+                "page": 1,
+                "offset": 100,
+                "apikey": API_KEY
+            }
             response = requests.get("https://api-sepolia.arbiscan.io/api", params=params, timeout=10)
             json_resp = response.json()
             result = json_resp.get("result", [])
@@ -401,6 +416,7 @@ def main():
     logger.info("Bot is running... 🚀")
     updater.idle()
 
+# Duplicate start_command is redefined here to ensure availability.
 def start_command(update, context):
     user_id = update.effective_user.id
     update.effective_message.reply_text(
