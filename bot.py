@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cortensor Node Monitoring Bot (PTB v13.5 Compatible) – Reply Keyboard Version (English)
+Cortensor Node Monitoring Bot – Telegram Reply Keyboard Version (PTB v13.5 Compatible)
 This bot sends node status updates, alerts, and periodic checks via Telegram.
 It logs errors and reports them to admin users, and displays status with emojis and hyperlinks.
 """
@@ -12,28 +12,32 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler, CallbackContext
+from telegram.ext import (
+    Updater,
+    CommandHandler,
+    MessageHandler,
+    Filters,
+    ConversationHandler,
+    CallbackContext,
+)
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
 # ==================== CONFIGURATION ====================
 TOKEN = os.getenv("TOKEN")
 API_KEY = os.getenv("API_KEY")
-UPDATE_INTERVAL = 300  # 5 minutes update interval ⏱️
+UPDATE_INTERVAL = 300  # 5 minutes update interval
 CORTENSOR_API = "https://dashboard-devnet3.cortensor.network"
-
-# ADMIN_IDS: comma-separated list of Telegram admin user IDs 👮‍♂️
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
-
-# File to store addresses persistently
 DATA_FILE = "data.json"
 
 # ==================== INITIALIZATION ====================
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                    level=logging.INFO)
 logger = logging.getLogger(__name__)
-WIB = timezone(timedelta(hours=7))  # WIB timezone (UTC+7)
+WIB = timezone(timedelta(hours=7))  # WIB (UTC+7)
 
 # ==================== CONVERSATION STATES ====================
 ADD_ADDRESS, REMOVE_ADDRESS, ANNOUNCE = range(1, 4)
@@ -86,13 +90,13 @@ def get_age(timestamp: int) -> str:
 def get_dynamic_delay(num_addresses: int) -> float:
     """
     Calculate a dynamic delay per API call so that total calls do not exceed 5 per second.
-    Enforces a minimum delay of 0.2 seconds.
+    A minimum delay of 0.2 seconds is enforced (max 5 calls/sec).
     """
-    base_delay = 0.2  # Minimum delay (i.e., 5 calls per second)
-    total_calls = 2 * num_addresses  # 2 API calls per address (balance & txlist)
+    base_delay = 0.2
+    total_calls = 2 * num_addresses  # 2 API calls per address: balance & txlist
     if total_calls <= 5:
         return base_delay
-    required_total_time = total_calls / 5.0  # in seconds
+    required_total_time = total_calls / 5.0
     intervals = total_calls - 1
     dynamic_delay = required_total_time / intervals
     return max(dynamic_delay, base_delay)
@@ -144,7 +148,6 @@ def safe_fetch_transactions(address: str, delay: float) -> list:
     time.sleep(delay)
     return tx_list
 
-# ==================== API FUNCTIONS (without internal delay) ====================
 def fetch_node_stats(address: str) -> dict:
     """
     Fetch node statistics from the dashboard API.
@@ -188,7 +191,7 @@ def auto_update(context: CallbackContext):
                 else:
                     health_list.append("⬜")
             health_status = " ".join(health_list)
-            stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input', '').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
+            stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
         else:
             status = "🔴 Offline"
             last_activity = "N/A"
@@ -220,7 +223,7 @@ def alert_check(context: CallbackContext):
             last_tx_time = int(txs[0]['timeStamp'])
             time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
             latest_25 = txs[:25]
-            stall_condition = len(latest_25) >= 25 and all(tx.get('input', '').lower().startswith("0x5c36b186") for tx in latest_25)
+            stall_condition = len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25)
             if time_diff > timedelta(minutes=15) or stall_condition:
                 msg_lines = [f"🚨 *Alert for {shorten_address(addr)}*:"]
                 if time_diff > timedelta(minutes=15):
@@ -256,7 +259,7 @@ def auto_node_stall(context: CallbackContext):
         txs = safe_fetch_transactions(addr, dynamic_delay)
         if txs:
             latest_25 = txs[:25]
-            stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input', '').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
+            stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
             last_tx_time = int(txs[0]['timeStamp'])
             last_activity = get_age(last_tx_time)
         else:
@@ -317,6 +320,7 @@ def help_command(update, context):
         parse_mode="Markdown"
     )
 
+# ==================== CONVERSATION HANDLERS ====================
 def add_address_start(update, context):
     update.message.reply_text("Please send me the wallet address to add:", reply_markup=ReplyKeyboardRemove())
     return ADD_ADDRESS
