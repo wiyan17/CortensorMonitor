@@ -92,14 +92,14 @@ def get_age(timestamp: int) -> str:
 # ==================== DYNAMIC RATE LIMIT HELPER ====================
 def get_dynamic_delay(num_addresses: int) -> float:
     """
-    Calculate dynamic delay per API call so that the total API calls do not exceed 5 per second.
+    Calculate dynamic delay per API call so that total calls do not exceed 5 per second.
     Assumption: Each address requires 2 API calls (balance & txlist).
     """
     total_calls = 2 * num_addresses
     if total_calls <= 5:
         return 0.0
     required_total_time = total_calls / 5.0  # in seconds
-    intervals = total_calls - 1  # gaps between calls
+    intervals = total_calls - 1
     return required_total_time / intervals
 
 def safe_fetch_balance(address: str, delay: float) -> float:
@@ -155,7 +155,7 @@ def fetch_node_stats(address: str) -> dict:
 
 # ==================== JOB FUNCTIONS ====================
 
-# Auto update now combines status, health, and stall information.
+# Auto update combines status, health, and stall info.
 def auto_update(context: CallbackContext):
     job = context.job
     chat_id = job.context['chat_id']
@@ -175,7 +175,7 @@ def auto_update(context: CallbackContext):
             status = "🟢 Online" if time_diff <= timedelta(minutes=5) else "🔴 Offline"
             last_activity = get_age(last_tx_time)
             latest_25 = txs[:25]
-            # Node Health calculation (divide last 25 into 5 groups)
+            # Health calculation: divide the last 25 transactions into 5 groups
             groups = [latest_25[i*5:(i+1)*5] for i in range(5)]
             group_statuses = []
             for group in groups:
@@ -187,7 +187,7 @@ def auto_update(context: CallbackContext):
                 else:
                     group_statuses.append("⬜")
             health_status = " ".join(group_statuses)
-            # Node Stall check
+            # Stall check: require at least 25 tx and all start with the PING method id.
             if len(latest_25) >= 25 and all(tx.get('input', '').lower().startswith("0x5c36b186") for tx in latest_25):
                 stall_status = "🚨 Node Stall"
             else:
@@ -214,7 +214,7 @@ def auto_update(context: CallbackContext):
         parse_mode="Markdown"
     )
 
-# Alert check now includes both inactivity and stall detection.
+# Alert check includes both inactivity and stall conditions.
 def alert_check(context: CallbackContext):
     job = context.job
     chat_id = job.context['chat_id']
@@ -226,9 +226,8 @@ def alert_check(context: CallbackContext):
             last_tx_time = int(txs[0]['timeStamp'])
             time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
             latest_25 = txs[:25]
-            stall_condition = False
-            if len(latest_25) >= 25 and all(tx.get('input', '').lower().startswith("0x5c36b186") for tx in latest_25):
-                stall_condition = True
+            stall_condition = (len(latest_25) >= 25 and
+                               all(tx.get('input', '').lower().startswith("0x5c36b186") for tx in latest_25))
             if time_diff > timedelta(minutes=15) or stall_condition:
                 alert_text = f"🚨 Alert for {shorten_address(addr)}:\n"
                 if time_diff > timedelta(minutes=15):
@@ -244,7 +243,7 @@ def alert_check(context: CallbackContext):
                 parse_mode="Markdown"
             )
 
-# New auto node stall job: periodically check only stall condition.
+# New auto node stall job: periodically check only the stall condition.
 def auto_node_stall(context: CallbackContext):
     job = context.job
     chat_id = job.context['chat_id']
@@ -282,7 +281,44 @@ def auto_node_stall(context: CallbackContext):
         parse_mode="Markdown"
     )
 
-# ==================== MENU KEYBOARDS ====================
+# Manual command for Node Stall check.
+def menu_node_stall(update, context):
+    chat_id = update.effective_chat.id
+    addresses = get_addresses_for_chat(chat_id)
+    if not addresses:
+        update.message.reply_text("No addresses found! Please add one using 'Add Address'.",
+                                    reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    dynamic_delay = get_dynamic_delay(len(addresses))
+    responses = []
+    for addr in addresses[:10]:
+        balance = safe_fetch_balance(addr, dynamic_delay)
+        txs = safe_fetch_transactions(addr, dynamic_delay)
+        if txs:
+            last_tx_time = int(txs[0]['timeStamp'])
+            last_activity = get_age(last_tx_time)
+            latest_25 = txs[:25]
+            if len(latest_25) >= 25 and all(tx.get('input', '').lower().startswith("0x5c36b186") for tx in latest_25):
+                stall_status = "🚨 Node Stall"
+            else:
+                stall_status = "✅ Normal"
+        else:
+            last_activity = "N/A"
+            stall_status = "No transactions found"
+        responses.append(
+            f"🔹 {shorten_address(addr)}\n"
+            f"💵 Balance: {balance:.4f} ETH\n"
+            f"⏳ Last activity: {last_activity}\n"
+            f"⚠️ Stall: {stall_status}\n"
+            f"🔗 [Arbiscan](https://sepolia.arbiscan.io/address/{addr})"
+        )
+    update.message.reply_text(
+        "🚨 Node Stall Check\n\n" + "\n\n".join(responses) +
+        f"\n\n⏰ Last update: {format_time(get_wib_time())}",
+        parse_mode="Markdown", reply_markup=main_menu_keyboard(update.effective_user.id)
+    )
+
+# ==================== MAIN MENU KEYBOARD ====================
 def main_menu_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     keyboard = [
         ["Add Address", "Remove Address"],
@@ -312,10 +348,10 @@ def help_command(update, context):
         "• Remove Address: Remove a wallet address from your list.\n"
         "• Check Status: View node status, balance, health, and stall info.\n"
         "• Node Health: Check node health based on the last 25 transactions divided into 5 groups.\n"
-        "• Node Stall: Check if the last 25 transactions contain only PING (MethodID: 0x5c36b186).\n"
+        "• Node Stall: Manually check if the last 25 transactions contain only PING (MethodID: 0x5c36b186).\n"
         "• Auto Update: Enable automatic updates every 5 minutes (combined status, health & stall).\n"
         "• Auto Node Stall: Enable periodic stall checks only.\n"
-        "• Enable Alerts: Receive notifications if no transactions in 15 minutes or if a stall is detected.\n"
+        "• Enable Alerts: Receive notifications if no transactions in 15 minutes or if a node stall is detected.\n"
         "• Stop: Disable auto-updates and alerts.\n"
         "• Announce (Admin only): Send an announcement to all chats.\n\n"
         "💡 Fun Fact: Every blockchain transaction is like a digital heartbeat that keeps the system alive. Monitor your node and be a digital hero!\n\n"
@@ -418,7 +454,6 @@ def menu_check_status(update, context):
             status = "🟢 Online" if time_diff <= timedelta(minutes=5) else "🔴 Offline"
             last_activity = get_age(last_tx_time)
             latest_25 = txs[:25]
-            # Calculate Health:
             groups = [latest_25[i*5:(i+1)*5] for i in range(5)]
             group_statuses = []
             for group in groups:
@@ -430,7 +465,6 @@ def menu_check_status(update, context):
                 else:
                     group_statuses.append("⬜")
             health_status = " ".join(group_statuses)
-            # Stall check:
             if len(latest_25) >= 25 and all(tx.get('input', '').lower().startswith("0x5c36b186") for tx in latest_25):
                 stall_status = "🚨 Node Stall"
             else:
@@ -455,6 +489,7 @@ def menu_check_status(update, context):
                               parse_mode="Markdown", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def menu_node_health(update, context):
+    # This command now combines health and stall info as well.
     chat_id = update.effective_chat.id
     addresses = get_addresses_for_chat(chat_id)
     if not addresses:
@@ -480,7 +515,6 @@ def menu_node_health(update, context):
                 else:
                     group_statuses.append("⬜")
             health_status = " ".join(group_statuses)
-            # Also check stall condition:
             if len(latest_25) >= 25 and all(tx.get('input', '').lower().startswith("0x5c36b186") for tx in latest_25):
                 stall_status = "🚨 Node Stall"
             else:
@@ -514,7 +548,8 @@ def menu_auto_update(update, context):
         update.message.reply_text("Auto-update is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
     context.job_queue.run_repeating(auto_update, interval=UPDATE_INTERVAL, context={'chat_id': chat_id}, name=f"auto_update_{chat_id}")
-    update.message.reply_text("✅ Auto-updates enabled! I will send combined status, health & stall updates every 5 minutes.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    update.message.reply_text("✅ Auto-updates enabled! I will send combined status, health & stall updates every 5 minutes.",
+                                reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def menu_enable_alerts(update, context):
     chat_id = update.effective_chat.id
@@ -526,7 +561,8 @@ def menu_enable_alerts(update, context):
         update.message.reply_text("Alerts are already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
     context.job_queue.run_repeating(alert_check, interval=900, context={'chat_id': chat_id}, name=f"alert_{chat_id}")
-    update.message.reply_text("✅ Alerts enabled! You will be notified if no transactions in 15 minutes or if a node stall is detected.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    update.message.reply_text("✅ Alerts enabled! You will be notified if no transactions in 15 minutes or if a node stall is detected.",
+                                reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def menu_auto_node_stall(update, context):
     chat_id = update.effective_chat.id
@@ -538,7 +574,8 @@ def menu_auto_node_stall(update, context):
         update.message.reply_text("Auto Node Stall is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
     context.job_queue.run_repeating(auto_node_stall, interval=UPDATE_INTERVAL, context={'chat_id': chat_id}, name=f"auto_node_stall_{chat_id}")
-    update.message.reply_text("✅ Auto Node Stall enabled! I will check stall status every 5 minutes.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    update.message.reply_text("✅ Auto Node Stall enabled! I will check stall status every 5 minutes.",
+                                reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def menu_stop(update, context):
     chat_id = update.effective_chat.id
@@ -549,7 +586,8 @@ def menu_stop(update, context):
             job.schedule_removal()
             removed_jobs += 1
     if removed_jobs:
-        update.message.reply_text("✅ Auto-update, alerts, and auto node stall have been stopped.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        update.message.reply_text("✅ Auto-update, alerts, and auto node stall have been stopped.",
+                                    reply_markup=main_menu_keyboard(update.effective_user.id))
     else:
         update.message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
