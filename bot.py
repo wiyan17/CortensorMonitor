@@ -176,7 +176,7 @@ def fetch_node_stats(address: str) -> dict:
     Fetch node statistics from the dashboard API.
     """
     try:
-        url = f"{CORTENSOR_API}/nodestats/{address}"
+        url = f"{CORTENSOR_API}/stats/node/{addr}"
         response = requests.get(url, timeout=15)
         return response.json()
     except Exception as e:
@@ -221,7 +221,7 @@ def auto_update(context: CallbackContext):
             f"⏱️ Last Activity: `{last_activity}`\n"
             f"🩺 Health: {health_status}\n"
             f"⚠️ Stall: {stall_status}\n"
-            f"[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | [📈 Dashboard]({CORTENSOR_API}/nodestats/{addr})"
+            f"[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{addr})"
         )
     final_output = "*Auto Update*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
     context.bot.send_message(chat_id=chat_id, text=final_output, parse_mode="Markdown")
@@ -248,7 +248,7 @@ def alert_check(context: CallbackContext):
                     msg_lines.append("⏱️ No transactions in the last 15 minutes.")
                 if stall_condition:
                     msg_lines.append("⚠️ Node stall detected (only PING transactions in the last 25).")
-                msg_lines.append(f"[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | [📈 Dashboard]({CORTENSOR_API}/nodestats/{addr})")
+                msg_lines.append(f"[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{addr})")
                 context.bot.send_message(chat_id=chat_id, text="\n".join(msg_lines), parse_mode="Markdown")
         else:
             context.bot.send_message(
@@ -371,7 +371,7 @@ def menu_check_status(update, context):
             f"⏱️ Last Activity: `{last_activity}`\n"
             f"🩺 Health: {health_status}\n"
             f"⚠️ Stall: {stall_status}\n"
-            f"[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | [📈 Dashboard]({CORTENSOR_API}/nodestats/{addr})"
+            f"[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{addr})"
         )
     final_output = "*Check Status*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
     update.effective_message.reply_text(final_output, parse_mode="Markdown", reply_markup=main_menu_keyboard(update.effective_user.id))
