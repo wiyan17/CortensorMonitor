@@ -253,7 +253,7 @@ def alert_check(context: CallbackContext):
         else:
             context.bot.send_message(
                 chat_id=chat_id,
-                text=f"🚨 *Alert for {shorten_address(addr)}*:\n- No transactions found!\n[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | [📈 Dashboard]({CORTENSOR_API}/nodestats/{addr})",
+                text=f"🚨 *Alert for {shorten_address(addr)}*:\n- No transactions found!\n[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{addr})",
                 parse_mode="Markdown"
             )
 
