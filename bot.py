@@ -3,16 +3,10 @@
 Cortensor Node Monitoring Bot – Telegram Reply Keyboard Version
 
 This bot provides real-time node monitoring via Telegram.
-It supports commands for:
-  - Adding/Removing wallet addresses (with customizable labels)
-  - Setting a custom API delay
-  - Checking status
-  - Enabling auto updates and alerts
-  - Stopping jobs
-  - Showing help
-  - Admin announcements
-
-All outputs are in English with detailed explanations and creative emoji decorations.
+It supports commands for adding/removing wallet addresses (with optional labels),
+checking status, enabling auto updates and alerts, setting a custom API delay,
+stopping jobs, and admin announcements.
+All outputs are in English with clear explanations and creative emoji decorations.
 """
 
 import logging
@@ -31,8 +25,8 @@ load_dotenv()
 TOKEN = os.getenv("TOKEN")
 API_KEY = os.getenv("API_KEY")
 UPDATE_INTERVAL = 300  # 5 minutes update interval
+# Base URL for dashboard links (new endpoint)
 CORTENSOR_API = "https://dashboard-devnet3.cortensor.network"
-# ADMIN_IDS should be a comma-separated list of Telegram user IDs.
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
 
@@ -175,7 +169,7 @@ def fetch_node_stats(address: str) -> dict:
 def auto_update(context: CallbackContext):
     job = context.job
     chat_id = job.context['chat_id']
-    addresses = get_addresses_for_chat(chat_id)[:15]  # Increase max monitoring nodes to 15
+    addresses = get_addresses_for_chat(chat_id)[:15]  # Now supports up to 15 nodes
     if not addresses:
         context.bot.send_message(chat_id=chat_id, text="ℹ️ No addresses found! Please add one using 'Add Address'.")
         return
@@ -243,12 +237,12 @@ def alert_check(context: CallbackContext):
 
 # -------------------- CONVERSATION HANDLER FUNCTIONS --------------------
 def set_delay_start(update, context):
-    """Initiate setting a custom delay (in seconds)."""
+    """Initiate setting a custom delay for API calls (in seconds)."""
     update.effective_message.reply_text("Please enter the custom delay (in seconds) for API calls (minimum 0.5):", reply_markup=ReplyKeyboardRemove())
     return SET_DELAY
 
 def set_delay_receive(update, context):
-    """Receive and validate the custom delay value, and store it for this chat."""
+    """Receive and store the custom delay value for the chat."""
     chat_id = update.effective_chat.id
     text = update.effective_message.text.strip()
     try:
@@ -265,11 +259,11 @@ def set_delay_receive(update, context):
 
 def add_address_start(update, context):
     """Initiate adding a wallet address. Format: <address>,<label> (label is optional)."""
-    update.effective_message.reply_text("Please send the wallet address to add. Optionally, include a label separated by a comma (e.g., `0xABC...123,My Node`):", reply_markup=ReplyKeyboardRemove())
+    update.effective_message.reply_text("Please send the wallet address to add. Optionally include a label separated by a comma (e.g., `0xABC...123,My Node`):", reply_markup=ReplyKeyboardRemove())
     return ADD_ADDRESS
 
 def add_address_receive(update, context):
-    """Receive and validate the wallet address and optional label."""
+    """Receive and validate the wallet address and label to add."""
     chat_id = update.effective_chat.id
     text = update.effective_message.text.strip()
     if "," in text:
@@ -332,7 +326,7 @@ def announce_start(update, context):
     return ANNOUNCE
 
 def announce_receive(update, context):
-    """Process the announcement message and broadcast it to all chats."""
+    """Process the announcement message and broadcast it to all registered chats."""
     message = update.effective_message.text
     data = load_data()
     if not data:
@@ -348,9 +342,9 @@ def announce_receive(update, context):
     update.effective_message.reply_text(f"📣 Announcement sent to {count} chats.", reply_markup=main_menu_keyboard(update.effective_user.id))
     return ConversationHandler.END
 
-# -------------------- COMMAND FUNCTIONS --------------------
+# -------------------- COMMAND HANDLERS --------------------
 def start_command(update, context):
-    """Send a welcome message and show the main menu."""
+    """Send a welcome message and display the main menu."""
     user_id = update.effective_user.id
     update.effective_message.reply_text(
         "👋 Welcome to Cortensor Node Monitoring Bot!\n\nI am here to help you monitor your node status easily. Choose an option from the menu below.",
@@ -362,14 +356,14 @@ def help_command(update, context):
     update.effective_message.reply_text(
         "📖 *Cortensor Node Monitoring Bot Guide*\n\n"
         "• *Add Address*: ➕ Add a wallet address. Format: `<wallet_address>,<label>` (label is optional).\n"
-        "• *Remove Address*: ➖ Remove a wallet address by selecting it (Format: `Label - Address`).\n"
+        "• *Remove Address*: ➖ Remove a wallet address. Select the address in the format: `Label - Address`.\n"
         "• *Check Status*: 📊 Get a consolidated update of your node's balance, status, recent activity, health, and stall info.\n"
         "• *Auto Update*: 🔄 Receive automatic updates every 5 minutes with combined info.\n"
-        "• *Enable Alerts*: 🔔 Monitor your node continuously and receive an alert if no transactions occur for 15 minutes or if a node stall (last 25 transactions are all PING) is detected.\n"
+        "• *Enable Alerts*: 🔔 Monitor your node continuously and get alerted if no transactions occur for 15 minutes or if a node stall is detected (last 25 transactions are all PING).\n"
         "• *Set Delay*: ⏱️ Set a custom delay (in seconds) for API calls instead of using dynamic delay.\n"
-        "• *Stop*: ⛔ Disable all auto-update and alert jobs.\n"
+        "• *Stop*: ⛔ Stop all auto-update and alert jobs.\n"
         "• *Announce* (Admin only): 📣 Broadcast an announcement to all registered chats.\n\n"
-        "💡 *Note*: A node stall alert means the last 25 transactions are all PING. If Arbiscan shows other transaction types, the alert might be inaccurate.\n"
+        "💡 *Note*: A node stall alert indicates that your last 25 transactions are all PING. If Arbiscan shows other types, the alert might be inaccurate.\n"
         "🚀 *Happy Monitoring!*",
         reply_markup=main_menu_keyboard(update.effective_user.id),
         parse_mode="Markdown"
