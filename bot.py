@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Cortensor Node Monitoring Bot
+Cortensor Node Monitoring Bot – Telegram Reply Keyboard Version
 
 This bot provides real-time node monitoring via Telegram.
-Commands:
+It supports the following commands:
   - Add Address (with optional label, format: <wallet_address>,<label>)
   - Remove Address
   - Check Status
@@ -14,7 +14,7 @@ Commands:
   - Help
   - Announce (admin only)
 
-Max nodes monitored per chat: 15
+Maximum nodes per chat: 15
 """
 
 import logging
@@ -33,7 +33,7 @@ load_dotenv()
 TOKEN = os.getenv("TOKEN")
 API_KEY = os.getenv("API_KEY")
 UPDATE_INTERVAL = 300  # 5 minutes update interval
-# Dashboard endpoint updated
+# Base URL for dashboard links (new endpoint)
 CORTENSOR_API = "https://dashboard-devnet3.cortensor.network"
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
@@ -47,7 +47,7 @@ WIB = timezone(timedelta(hours=7))  # WIB (UTC+7)
 ADD_ADDRESS, REMOVE_ADDRESS, ANNOUNCE, SET_DELAY = range(1, 5)
 
 # -------------------- GLOBAL VARIABLES --------------------
-# Store custom delay (in seconds) per chat; if not set, dynamic delay is used.
+# Custom delay (in seconds) per chat; if not set, dynamic delay is used.
 custom_delays = {}
 
 # -------------------- DATA STORAGE FUNCTIONS --------------------
@@ -359,7 +359,7 @@ def help_command(update, context):
         "• *Set Delay*: ⏱️ Set a custom delay (in seconds) for API calls instead of using dynamic delay.\n"
         "• *Stop*: ⛔ Stop all auto-update and alert jobs.\n"
         "• *Announce* (Admin only): 📣 Broadcast an announcement to all registered chats.\n\n"
-        "💡 *Note*: A node stall alert means the last 25 transactions are all PING. If Arbiscan shows other transaction types, the alert might be inaccurate.\n"
+        "💡 *Note*: A node stall alert indicates that your last 25 transactions are all PING. If Arbiscan shows other transaction types, the alert might be inaccurate.\n"
         "🚀 *Happy Monitoring!*",
         reply_markup=main_menu_keyboard(update.effective_user.id),
         parse_mode="Markdown"
@@ -367,7 +367,6 @@ def help_command(update, context):
 
 # -------------------- MENU COMMAND FUNCTIONS --------------------
 def menu_auto_update(update, context):
-    """Start the auto-update job and send confirmation."""
     chat_id = update.effective_chat.id
     if not get_addresses_for_chat(chat_id):
         update.effective_message.reply_text("ℹ️ No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
@@ -380,7 +379,6 @@ def menu_auto_update(update, context):
     update.effective_message.reply_text("✅ Auto-update started.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def menu_enable_alerts(update, context):
-    """Start the alerts job and send confirmation."""
     chat_id = update.effective_chat.id
     if not get_addresses_for_chat(chat_id):
         update.effective_message.reply_text("ℹ️ No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
@@ -393,7 +391,6 @@ def menu_enable_alerts(update, context):
     update.effective_message.reply_text("✅ Alerts enabled.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def menu_stop(update, context):
-    """Stop all auto-update and alert jobs."""
     chat_id = update.effective_chat.id
     removed_jobs = 0
     for job_name in (f"auto_update_{chat_id}", f"alert_{chat_id}"):
@@ -421,7 +418,7 @@ def main():
     dp.add_handler(MessageHandler(Filters.regex("^Enable Alerts$"), menu_enable_alerts))
     dp.add_handler(CommandHandler("stop", menu_stop))
     dp.add_handler(MessageHandler(Filters.regex("^Stop$"), menu_stop))
-    dp.add_handler(CommandHandler("check_status", help_command))  # For clarity, using help_command for now; replace with your check status function if available.
+    dp.add_handler(CommandHandler("check_status", help_command))  # Replace with your check status function if available.
     dp.add_handler(MessageHandler(Filters.regex("^Check Status$"), help_command))
     dp.add_handler(CommandHandler("announce", announce_start))
     dp.add_handler(CommandHandler("set_delay", set_delay_start))
@@ -470,7 +467,6 @@ def main():
     logger.info("Bot is running... 🚀")
     updater.idle()
 
-# Duplicate start_command for fallback.
 def start_command(update, context):
     user_id = update.effective_user.id
     update.effective_message.reply_text(
