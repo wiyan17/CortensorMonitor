@@ -411,4 +411,67 @@ def main():
     dp.add_handler(CommandHandler("start", start_command))
     dp.add_handler(CommandHandler("help", help_command))
     dp.add_handler(CommandHandler("auto_update", menu_auto_update))
-    dp.add_handler(MessageHandler(Filters.regex("^Auto
+    dp.add_handler(MessageHandler(Filters.regex("^Auto Update$"), menu_auto_update))
+    dp.add_handler(CommandHandler("enable_alerts", menu_enable_alerts))
+    dp.add_handler(MessageHandler(Filters.regex("^Enable Alerts$"), menu_enable_alerts))
+    dp.add_handler(CommandHandler("stop", menu_stop))
+    dp.add_handler(MessageHandler(Filters.regex("^Stop$"), menu_stop))
+    dp.add_handler(CommandHandler("check_status", menu_check_status))
+    dp.add_handler(MessageHandler(Filters.regex("^Check Status$"), menu_check_status))
+    dp.add_handler(CommandHandler("announce", announce_start))
+    dp.add_handler(CommandHandler("set_delay", set_delay_start))
+    dp.add_handler(MessageHandler(Filters.regex("^Set Delay$"), set_delay_start))
+    dp.add_error_handler(error_handler)
+
+    conv_add = ConversationHandler(
+        entry_points=[MessageHandler(Filters.regex("^Add Address$"), add_address_start)],
+        states={
+            ADD_ADDRESS: [MessageHandler(Filters.text & ~Filters.command, add_address_receive)]
+        },
+        fallbacks=[CommandHandler("cancel", lambda update, context: update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id)))]
+    )
+    dp.add_handler(conv_add)
+
+    conv_remove = ConversationHandler(
+        entry_points=[MessageHandler(Filters.regex("^Remove Address$"), remove_address_start)],
+        states={
+            REMOVE_ADDRESS: [MessageHandler(Filters.text & ~Filters.command, remove_address_receive)]
+        },
+        fallbacks=[CommandHandler("cancel", lambda update, context: update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id)))]
+    )
+    dp.add_handler(conv_remove)
+
+    conv_announce = ConversationHandler(
+        entry_points=[MessageHandler(Filters.regex("^Announce$"), announce_start)],
+        states={
+            ANNOUNCE: [MessageHandler(Filters.text & ~Filters.command, announce_receive)]
+        },
+        fallbacks=[CommandHandler("cancel", lambda update, context: update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id)))]
+    )
+    dp.add_handler(conv_announce)
+
+    conv_set_delay = ConversationHandler(
+        entry_points=[MessageHandler(Filters.regex("^Set Delay$"), set_delay_start)],
+        states={
+            SET_DELAY: [MessageHandler(Filters.text & ~Filters.command, set_delay_receive)]
+        },
+        fallbacks=[CommandHandler("cancel", lambda update, context: update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id)))]
+    )
+    dp.add_handler(conv_set_delay)
+
+    dp.add_handler(MessageHandler(Filters.regex("^Check Status$"), menu_check_status))
+
+    updater.start_polling()
+    logger.info("Bot is running... 🚀")
+    updater.idle()
+
+# Duplicate start_command for redundancy.
+def start_command(update, context):
+    user_id = update.effective_user.id
+    update.effective_message.reply_text(
+        "👋 Welcome to Cortensor Node Monitoring Bot!\n\nI am here to help you monitor your node status easily. Choose an option from the menu below.",
+        reply_markup=main_menu_keyboard(user_id)
+    )
+
+if __name__ == "__main__":
+    main()
