@@ -2,18 +2,18 @@
 """
 Cortensor Node Monitoring Bot – Telegram Reply Keyboard Version
 
-Fitur:
-• Add Address (dengan label opsional, format: <wallet_address>,<label>)
+Features:
+• Add Address (with optional label, format: <wallet_address>,<label>)
 • Remove Address
 • Check Status
 • Auto Update
 • Enable Alerts
-• Set Delay (custom delay antar API call per chat)
+• Set Delay (custom auto update interval per chat)
 • Stop
 • Help
 • Announce (admin only)
 
-Maksimum node per chat: 15
+Maximum nodes per chat: 15
 """
 
 import logging
@@ -38,21 +38,22 @@ load_dotenv()
 # -------------------- CONFIGURATION --------------------
 TOKEN = os.getenv("TOKEN")
 API_KEY = os.getenv("API_KEY")
-UPDATE_INTERVAL = 300  # interval auto update: 5 menit
+DEFAULT_UPDATE_INTERVAL = 300  # Default auto update interval: 5 minutes
 CORTENSOR_API = os.getenv("CORTENSOR_API", "https://dashboard-devnet3.cortensor.network")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
-BASE_DELAY = 2.0  # delay dasar antar API call
+MIN_AUTO_UPDATE_INTERVAL = 60  # Minimum allowed auto update interval in seconds
 
 # -------------------- INITIALIZATION --------------------
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-WIB = timezone(timedelta(hours=7))  # WIB (UTC+7)
+# WIB (UTC+7)
+WIB = timezone(timedelta(hours=7))
 
 # -------------------- CONVERSATION STATES --------------------
-ADD_ADDRESS, REMOVE_ADDRESS, ANNOUNCE, SET_DELAY = range(1, 5)
+ADD_ADDRESS, REMOVE_ADDRESS, ANNOUNCE, SET_INTERVAL = range(1, 5)
 
 # -------------------- DATA STORAGE FUNCTIONS --------------------
 def load_data() -> dict:
@@ -73,7 +74,7 @@ def save_data(data: dict):
 
 def get_chat_data(chat_id: int) -> dict:
     data = load_data()
-    return data.get(str(chat_id), {"addresses": [], "delay": None})
+    return data.get(str(chat_id), {"addresses": [], "auto_update_interval": DEFAULT_UPDATE_INTERVAL})
 
 def update_chat_data(chat_id: int, chat_data: dict):
     data = load_data()
@@ -88,13 +89,23 @@ def update_addresses_for_chat(chat_id: int, addresses: list):
     chat_data["addresses"] = addresses
     update_chat_data(chat_id, chat_data)
 
-def get_custom_delay(chat_id: int) -> float:
-    return get_chat_data(chat_id).get("delay", None)
+def get_auto_update_interval(chat_id: int) -> float:
+    return get_chat_data(chat_id).get("auto_update_interval", DEFAULT_UPDATE_INTERVAL)
 
-def update_custom_delay(chat_id: int, delay: float):
+def update_auto_update_interval(chat_id: int, interval: float):
     chat_data = get_chat_data(chat_id)
-    chat_data["delay"] = delay
+    chat_data["auto_update_interval"] = interval
     update_chat_data(chat_id, chat_data)
+
+# -------------------- HELPER FUNCTION --------------------
+def parse_address_item(item):
+    """
+    Ensure that the address item is returned as a tuple: (wallet, label)
+    Even if the stored item is a plain string.
+    """
+    if isinstance(item, dict):
+        return item.get("address"), item.get("label", "")
+    return item, ""
 
 # -------------------- UTILITY FUNCTIONS --------------------
 def shorten_address(address: str) -> str:
@@ -113,20 +124,6 @@ def get_age(timestamp: int) -> str:
         return f"{seconds} secs ago"
     minutes = seconds // 60
     return f"{minutes} mins ago" if minutes < 60 else f"{minutes//60} hours ago"
-
-def get_chat_delay(chat_id: int, num_addresses: int) -> float:
-    """Jika delay custom diset untuk chat, gunakan delay tersebut, jika tidak, hitung delay dinamis."""
-    custom = get_custom_delay(chat_id)
-    if custom is not None:
-        return custom
-    # Hitung delay dinamis: 2 API calls per address, tidak melebihi 0.5 call per detik.
-    total_calls = 2 * num_addresses
-    if total_calls <= 0.5:
-        return BASE_DELAY
-    required_total_time = total_calls / 0.5  # total waktu dalam detik
-    intervals = total_calls - 1
-    dynamic_delay = required_total_time / intervals
-    return max(dynamic_delay, BASE_DELAY)
 
 # -------------------- MENU KEYBOARD --------------------
 def main_menu_keyboard(user_id: int) -> ReplyKeyboardMarkup:
@@ -205,14 +202,13 @@ def auto_update(context: CallbackContext):
     if not addresses:
         context.bot.send_message(chat_id=chat_id, text="ℹ️ No addresses found! Please add one using 'Add Address'.")
         return
-    delay = get_chat_delay(chat_id, len(addresses))
+    # Use the auto update interval stored for the chat for scheduling
     output_lines = []
     for item in addresses:
-        addr = item.get("address")
-        label = item.get("label", "")
-        addr_display = f"🔑 {shorten_address(addr)}" + (f" ({label})" if label else "")
-        balance = safe_fetch_balance(addr, delay)
-        txs = safe_fetch_transactions(addr, delay)
+        wallet, label = parse_address_item(item)
+        addr_display = f"🔑 {shorten_address(wallet)}" + (f" ({label})" if label else "")
+        balance = safe_fetch_balance(wallet, delay=2.0)
+        txs = safe_fetch_transactions(wallet, delay=2.0)
         if txs:
             last_tx_time = int(txs[0]['timeStamp'])
             time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
@@ -234,7 +230,7 @@ def auto_update(context: CallbackContext):
             f"⏱️ Last Activity: `{last_activity}`\n"
             f"🩺 Health: {health_status}\n"
             f"⚠️ Stall: {stall_status}\n"
-            f"[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{addr})"
+            f"[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{wallet}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{wallet})"
         )
     final_output = "*Auto Update*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
     context.bot.send_message(chat_id=chat_id, text=final_output, parse_mode="Markdown")
@@ -243,36 +239,33 @@ def alert_check(context: CallbackContext):
     job = context.job
     chat_id = job.context['chat_id']
     addresses = get_addresses_for_chat(chat_id)[:15]
-    delay = get_chat_delay(chat_id, len(addresses))
     for item in addresses:
-        addr = item.get("address")
-        label = item.get("label", "")
-        txs = safe_fetch_transactions(addr, delay)
+        wallet, label = parse_address_item(item)
+        txs = safe_fetch_transactions(wallet, delay=2.0)
         if txs:
             last_tx_time = int(txs[0]['timeStamp'])
             time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
             latest_25 = txs[:25]
             stall_condition = len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25)
             if time_diff > timedelta(minutes=15) or stall_condition:
-                msg_lines = [f"🚨 *Alert for {shorten_address(addr)}" + (f" ({label})" if label else "") + "*:"]
+                msg_lines = [f"🚨 *Alert for {shorten_address(wallet)}" + (f" ({label})" if label else "") + "*:"]
                 if time_diff > timedelta(minutes=15):
                     msg_lines.append("⏱️ No transactions in the last 15 minutes.")
                 if stall_condition:
                     msg_lines.append("⚠️ Node stall detected (only PING transactions in the last 25).")
-                msg_lines.append(f"[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{addr})")
+                msg_lines.append(f"[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{wallet}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{wallet})")
                 context.bot.send_message(chat_id=chat_id, text="\n".join(msg_lines), parse_mode="Markdown")
         else:
             context.bot.send_message(
                 chat_id=chat_id,
-                text=f"🚨 *Alert for {shorten_address(addr)}" + (f" ({label})" if label else "") + "*:\n- No transactions found!\n[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{addr})",
+                text=f"🚨 *Alert for {shorten_address(wallet)}" + (f" ({label})" if label else "") + "*:\n- No transactions found!\n[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{wallet}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{wallet})",
                 parse_mode="Markdown"
             )
 
 # -------------------- CONVERSATION HANDLER FUNCTIONS --------------------
 def add_address_start(update, context):
     update.effective_message.reply_text(
-        "Silakan kirimkan alamat wallet (dengan format `<wallet_address>,<label>` jika ingin menambahkan label). "
-        "Contoh: 0xABC123...7890,My Node\n(Kirim /cancel untuk membatalkan)",
+        "Please send the wallet address (with format `<wallet_address>,<label>` if you want to add a label).\nExample: 0xABC123...7890,My Node\n(Send /cancel to abort)",
         reply_markup=ReplyKeyboardRemove()
     )
     return ADD_ADDRESS
@@ -284,88 +277,93 @@ def add_address_receive(update, context):
     wallet = parts[0].lower()
     label = parts[1] if len(parts) > 1 else ""
     if not wallet.startswith("0x") or len(wallet) != 42:
-        update.effective_message.reply_text("❌ Alamat tidak valid! Pastikan dimulai dengan '0x' dan terdiri dari 42 karakter.\nCoba lagi atau ketik /cancel untuk membatalkan.")
+        update.effective_message.reply_text("❌ Invalid wallet address! It must start with '0x' and be 42 characters long.\nTry again or send /cancel to abort.")
         return ADD_ADDRESS
     addresses = get_addresses_for_chat(chat_id)
-    if any(item.get("address") == wallet for item in addresses):
-        update.effective_message.reply_text("⚠️ Alamat sudah ada! Kembali ke menu utama.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    # Allow both dict and string formats
+    if any((item.get("address") if isinstance(item, dict) else item) == wallet for item in addresses):
+        update.effective_message.reply_text("⚠️ Address already exists! Returning to main menu.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return ConversationHandler.END
     if len(addresses) >= 15:
-        update.effective_message.reply_text("❌ Maksimum 15 node per chat sudah tercapai! Kembali ke menu utama.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        update.effective_message.reply_text("❌ Maximum of 15 nodes per chat reached! Returning to main menu.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return ConversationHandler.END
     addresses.append({"address": wallet, "label": label})
     update_addresses_for_chat(chat_id, addresses)
-    update.effective_message.reply_text(f"✅ Ditambahkan: {shorten_address(wallet)}" + (f" ({label})" if label else ""), reply_markup=main_menu_keyboard(update.effective_user.id))
+    update.effective_message.reply_text(f"✅ Added: {shorten_address(wallet)}" + (f" ({label})" if label else ""), reply_markup=main_menu_keyboard(update.effective_user.id))
     return ConversationHandler.END
 
 def remove_address_start(update, context):
     chat_id = update.effective_chat.id
     addresses = get_addresses_for_chat(chat_id)
     if not addresses:
-        update.effective_message.reply_text("Tidak ada alamat untuk dihapus.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        update.effective_message.reply_text("No addresses found to remove.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return ConversationHandler.END
-    # Tampilkan setiap alamat dengan label (jika ada)
-    keyboard = [[f"{item.get('address')}" + (f" ({item.get('label')})" if item.get("label") else "")] for item in addresses]
+    keyboard = []
+    for item in addresses:
+        wallet, label = parse_address_item(item)
+        display = f"{wallet}" + (f" ({label})" if label else "")
+        keyboard.append([display])
     keyboard.append(["Cancel"])
-    update.effective_message.reply_text("Pilih alamat yang ingin dihapus:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True))
+    update.effective_message.reply_text("Select the address you want to remove:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True))
     return REMOVE_ADDRESS
 
 def remove_address_receive(update, context):
     chat_id = update.effective_chat.id
     choice = update.effective_message.text.strip()
     if choice.lower() == "cancel":
-        update.effective_message.reply_text("Operasi dibatalkan.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return ConversationHandler.END
     addresses = get_addresses_for_chat(chat_id)
     new_addresses = []
     found = False
     for item in addresses:
-        display = f"{item.get('address')}" + (f" ({item.get('label')})" if item.get("label") else "")
+        wallet, label = parse_address_item(item)
+        display = f"{wallet}" + (f" ({label})" if label else "")
         if display == choice:
             found = True
             continue
         new_addresses.append(item)
     if not found:
-        update.effective_message.reply_text("❌ Alamat tidak ditemukan.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        update.effective_message.reply_text("❌ Address not found.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return ConversationHandler.END
     update_addresses_for_chat(chat_id, new_addresses)
-    update.effective_message.reply_text(f"✅ Alamat telah dihapus.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    update.effective_message.reply_text("✅ Address removed.", reply_markup=main_menu_keyboard(update.effective_user.id))
     return ConversationHandler.END
 
-def set_delay_start(update, context):
+def set_interval_start(update, context):
     update.effective_message.reply_text(
-        "Silakan masukkan nilai delay (dalam detik) yang diinginkan antar API call.\nContoh: 3.5\n(Kirim /cancel untuk membatalkan)",
+        "Please enter the desired auto update interval (in seconds).\nExample: 300\nMinimum is 60 seconds.\n(Send /cancel to abort)",
         reply_markup=ReplyKeyboardRemove()
     )
-    return SET_DELAY
+    return SET_INTERVAL
 
-def set_delay_receive(update, context):
+def set_interval_receive(update, context):
     chat_id = update.effective_chat.id
     try:
-        delay_val = float(update.effective_message.text.strip())
-        if delay_val < BASE_DELAY:
-            update.effective_message.reply_text(f"Delay tidak boleh kurang dari {BASE_DELAY} detik. Coba lagi atau ketik /cancel.")
-            return SET_DELAY
-        update_custom_delay(chat_id, delay_val)
-        update.effective_message.reply_text(f"✅ Delay berhasil disetel ke {delay_val} detik.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        interval_val = float(update.effective_message.text.strip())
+        if interval_val < MIN_AUTO_UPDATE_INTERVAL:
+            update.effective_message.reply_text(f"Interval cannot be less than {MIN_AUTO_UPDATE_INTERVAL} seconds. Try again or send /cancel.")
+            return SET_INTERVAL
+        update_auto_update_interval(chat_id, interval_val)
+        update.effective_message.reply_text(f"✅ Auto update interval set to {interval_val} seconds.", reply_markup=main_menu_keyboard(update.effective_user.id))
     except ValueError:
-        update.effective_message.reply_text("❌ Input tidak valid. Masukkan angka delay dalam format desimal (contoh: 3.5).")
-        return SET_DELAY
+        update.effective_message.reply_text("❌ Invalid input. Please enter a number (e.g., 300).")
+        return SET_INTERVAL
     return ConversationHandler.END
 
 def announce_start(update, context):
     user_id = update.effective_user.id
     if user_id not in ADMIN_IDS:
-        update.effective_message.reply_text("❌ Anda tidak memiliki izin untuk menggunakan perintah ini.", reply_markup=main_menu_keyboard(user_id))
+        update.effective_message.reply_text("❌ You are not authorized to use this command.", reply_markup=main_menu_keyboard(user_id))
         return ConversationHandler.END
-    update.effective_message.reply_text("Silakan kirimkan pesan pengumuman:", reply_markup=ReplyKeyboardRemove())
+    update.effective_message.reply_text("Please send the announcement message:", reply_markup=ReplyKeyboardRemove())
     return ANNOUNCE
 
 def announce_receive(update, context):
     message = update.effective_message.text
     data = load_data()
     if not data:
-        update.effective_message.reply_text("Tidak ditemukan chat untuk dikirimkan pengumuman.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        update.effective_message.reply_text("No chats found to send the announcement.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return ConversationHandler.END
     count = 0
     for chat in data.keys():
@@ -374,7 +372,7 @@ def announce_receive(update, context):
             count += 1
         except Exception as e:
             logger.error(f"Error sending announcement to chat {chat}: {e}")
-    update.effective_message.reply_text(f"📣 Pengumuman dikirim ke {count} chat.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    update.effective_message.reply_text(f"📣 Announcement sent to {count} chats.", reply_markup=main_menu_keyboard(update.effective_user.id))
     return ConversationHandler.END
 
 # -------------------- COMMAND FUNCTIONS --------------------
@@ -382,16 +380,14 @@ def menu_check_status(update, context):
     chat_id = update.effective_chat.id
     addresses = get_addresses_for_chat(chat_id)
     if not addresses:
-        update.effective_message.reply_text("Tidak ada alamat yang terdaftar! Silakan tambahkan menggunakan 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        update.effective_message.reply_text("No addresses registered! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
-    delay = get_chat_delay(chat_id, len(addresses))
     output_lines = []
     for item in addresses[:15]:
-        addr = item.get("address")
-        label = item.get("label", "")
-        addr_display = f"🔑 {shorten_address(addr)}" + (f" ({label})" if label else "")
-        balance = safe_fetch_balance(addr, delay)
-        txs = safe_fetch_transactions(addr, delay)
+        wallet, label = parse_address_item(item)
+        addr_display = f"🔑 {shorten_address(wallet)}" + (f" ({label})" if label else "")
+        balance = safe_fetch_balance(wallet, delay=2.0)
+        txs = safe_fetch_transactions(wallet, delay=2.0)
         if txs:
             last_tx_time = int(txs[0]['timeStamp'])
             time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
@@ -413,7 +409,7 @@ def menu_check_status(update, context):
             f"⏱️ Last Activity: `{last_activity}`\n"
             f"🩺 Health: {health_status}\n"
             f"⚠️ Stall: {stall_status}\n"
-            f"[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{addr}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{addr})"
+            f"[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{wallet}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{wallet})"
         )
     final_output = "*Check Status*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
     update.effective_message.reply_text(final_output, parse_mode="Markdown", reply_markup=main_menu_keyboard(update.effective_user.id))
@@ -421,30 +417,32 @@ def menu_check_status(update, context):
 def menu_auto_update(update, context):
     chat_id = update.effective_chat.id
     if not get_addresses_for_chat(chat_id):
-        update.effective_message.reply_text("Tidak ada alamat terdaftar! Tambahkan menggunakan 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        update.effective_message.reply_text("No addresses registered! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
+    # Use the custom auto update interval if set
+    interval = get_auto_update_interval(chat_id)
     current_jobs = context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}")
     if current_jobs:
-        update.effective_message.reply_text("Auto update sudah aktif.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        update.effective_message.reply_text("Auto update is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
-    context.job_queue.run_repeating(auto_update, interval=UPDATE_INTERVAL, context={'chat_id': chat_id}, name=f"auto_update_{chat_id}")
+    context.job_queue.run_repeating(auto_update, interval=interval, context={'chat_id': chat_id}, name=f"auto_update_{chat_id}")
     update.effective_message.reply_text(
-        "✅ Auto update dimulai.\n\nBot akan mengirimkan update node setiap 5 menit.",
+        f"✅ Auto update started. (Interval: {interval} seconds)\n\nThe bot will send node updates automatically.",
         reply_markup=main_menu_keyboard(update.effective_user.id)
     )
 
 def menu_enable_alerts(update, context):
     chat_id = update.effective_chat.id
     if not get_addresses_for_chat(chat_id):
-        update.effective_message.reply_text("Tidak ada alamat terdaftar! Tambahkan menggunakan 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        update.effective_message.reply_text("No addresses registered! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
     current_jobs = context.job_queue.get_jobs_by_name(f"alert_{chat_id}")
     if current_jobs:
-        update.effective_message.reply_text("Alerts sudah aktif.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        update.effective_message.reply_text("Alerts are already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
     context.job_queue.run_repeating(alert_check, interval=900, context={'chat_id': chat_id}, name=f"alert_{chat_id}")
     update.effective_message.reply_text(
-        "✅ Alerts diaktifkan.\n\nBot akan memantau node dan mengirimkan alert jika tidak ada transaksi selama 15 menit atau terdeteksi node stall.",
+        "✅ Alerts enabled.\n\nThe bot will monitor your node and send alerts if no transactions occur for 15 minutes or if a node stall is detected.",
         reply_markup=main_menu_keyboard(update.effective_user.id)
     )
 
@@ -457,22 +455,22 @@ def menu_stop(update, context):
             job.schedule_removal()
             removed_jobs += 1
     if removed_jobs:
-        update.effective_message.reply_text("✅ Semua job (auto update dan alerts) telah dihentikan.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        update.effective_message.reply_text("✅ All jobs (auto update and alerts) have been stopped.", reply_markup=main_menu_keyboard(update.effective_user.id))
     else:
-        update.effective_message.reply_text("Tidak ada job aktif.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        update.effective_message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def help_command(update, context):
     update.effective_message.reply_text(
-        "📖 *Panduan Cortensor Node Monitoring Bot*\n\n"
-        "• *Add Address*: ➕ Tambahkan alamat wallet dengan format `<wallet_address>,<label>` (label opsional).\n"
-        "• *Remove Address*: ➖ Hapus alamat wallet yang sudah ditambahkan.\n"
-        "• *Check Status*: 📊 Tampilkan status node, balance, aktivitas terbaru, health, dan stall.\n"
-        "• *Auto Update*: 🔄 Mulai auto update setiap 5 menit.\n"
-        "• *Enable Alerts*: 🔔 Aktifkan alert jika tidak ada transaksi selama 15 menit atau terjadi node stall.\n"
-        "• *Set Delay*: ⏱️ Atur delay antar API call (minimal 2.0 detik).\n"
-        "• *Stop*: ⛔ Hentikan semua auto update dan alert.\n"
-        "• *Announce* (Admin only): 📣 Kirim pengumuman ke semua chat terdaftar.\n\n"
-        "💡 Maksimum node per chat: 15\n\n"
+        "📖 *Cortensor Node Monitoring Bot Guide*\n\n"
+        "• *Add Address*: ➕ Add a wallet address with format `<wallet_address>,<label>` (optional label).\n"
+        "• *Remove Address*: ➖ Remove an added wallet address.\n"
+        "• *Check Status*: 📊 Show node status, balance, last activity, health, and stall info.\n"
+        "• *Auto Update*: 🔄 Start auto update; the bot sends updates automatically based on your set interval.\n"
+        "• *Enable Alerts*: 🔔 Enable alerts if no transactions occur for 15 minutes or if a node stall is detected.\n"
+        "• *Set Delay*: ⏱️ Set a custom auto update interval (in seconds, minimum 60 seconds).\n"
+        "• *Stop*: ⛔ Stop all auto update and alert jobs.\n"
+        "• *Announce* (Admin only): 📣 Send an announcement to all registered chats.\n\n"
+        f"💡 Maximum nodes per chat: 15\n\n"
         "🚀 *Happy Monitoring!*",
         reply_markup=main_menu_keyboard(update.effective_user.id),
         parse_mode="Markdown"
@@ -481,14 +479,14 @@ def help_command(update, context):
 def start_command(update, context):
     user_id = update.effective_user.id
     update.effective_message.reply_text(
-        "👋 Selamat datang di Cortensor Node Monitoring Bot!\nPilih opsi dari menu di bawah:",
+        "👋 Welcome to the Cortensor Node Monitoring Bot!\nSelect an option from the menu below:",
         reply_markup=main_menu_keyboard(user_id)
     )
 
 # -------------------- ERROR HANDLER --------------------
 def error_handler(update, context):
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
-    error_text = f"⚠️ Terjadi error: {context.error}"
+    error_text = f"⚠️ An error occurred: {context.error}"
     for admin_id in ADMIN_IDS:
         context.bot.send_message(chat_id=admin_id, text=error_text)
 
@@ -517,7 +515,7 @@ def main():
         states={
             ADD_ADDRESS: [MessageHandler(Filters.text & ~Filters.command, add_address_receive)]
         },
-        fallbacks=[CommandHandler("cancel", lambda update, context: update.effective_message.reply_text("Operasi dibatalkan.", reply_markup=main_menu_keyboard(update.effective_user.id)))]
+        fallbacks=[CommandHandler("cancel", lambda update, context: update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id)))]
     )
     dp.add_handler(conv_add)
 
@@ -526,25 +524,25 @@ def main():
         states={
             REMOVE_ADDRESS: [MessageHandler(Filters.text & ~Filters.command, remove_address_receive)]
         },
-        fallbacks=[CommandHandler("cancel", lambda update, context: update.effective_message.reply_text("Operasi dibatalkan.", reply_markup=main_menu_keyboard(update.effective_user.id)))]
+        fallbacks=[CommandHandler("cancel", lambda update, context: update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id)))]
     )
     dp.add_handler(conv_remove)
 
-    conv_delay = ConversationHandler(
-        entry_points=[MessageHandler(Filters.regex("^Set Delay$"), set_delay_start)],
+    conv_interval = ConversationHandler(
+        entry_points=[MessageHandler(Filters.regex("^Set Delay$"), set_interval_start)],
         states={
-            SET_DELAY: [MessageHandler(Filters.text & ~Filters.command, set_delay_receive)]
+            SET_INTERVAL: [MessageHandler(Filters.text & ~Filters.command, set_interval_receive)]
         },
-        fallbacks=[CommandHandler("cancel", lambda update, context: update.effective_message.reply_text("Operasi dibatalkan.", reply_markup=main_menu_keyboard(update.effective_user.id)))]
+        fallbacks=[CommandHandler("cancel", lambda update, context: update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id)))]
     )
-    dp.add_handler(conv_delay)
+    dp.add_handler(conv_interval)
 
     conv_announce = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Announce$"), announce_start)],
         states={
             ANNOUNCE: [MessageHandler(Filters.text & ~Filters.command, announce_receive)]
         },
-        fallbacks=[CommandHandler("cancel", lambda update, context: update.effective_message.reply_text("Operasi dibatalkan.", reply_markup=main_menu_keyboard(update.effective_user.id)))]
+        fallbacks=[CommandHandler("cancel", lambda update, context: update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id)))]
     )
     dp.add_handler(conv_announce)
 
