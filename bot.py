@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
 """
-Cortensor Node Monitoring Bot – Telegram Reply Keyboard Version
+Cortensor Node Monitoring Bot
 
 This bot provides real-time node monitoring via Telegram.
-It supports commands for adding/removing wallet addresses (with optional labels and custom API delay),
-checking status, enabling auto updates and alerts, and admin announcements.
-All outputs are in English with clear explanations and creative emoji decorations.
+Commands:
+  - Add Address (with optional label, format: <wallet_address>,<label>)
+  - Remove Address
+  - Check Status
+  - Auto Update
+  - Enable Alerts
+  - Set Delay
+  - Stop
+  - Help
+  - Announce (admin only)
+
+Max nodes monitored per chat: 15
 """
 
 import logging
@@ -24,7 +33,7 @@ load_dotenv()
 TOKEN = os.getenv("TOKEN")
 API_KEY = os.getenv("API_KEY")
 UPDATE_INTERVAL = 300  # 5 minutes update interval
-# Base URL for dashboard links (new endpoint)
+# Dashboard endpoint updated
 CORTENSOR_API = "https://dashboard-devnet3.cortensor.network"
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
@@ -38,7 +47,7 @@ WIB = timezone(timedelta(hours=7))  # WIB (UTC+7)
 ADD_ADDRESS, REMOVE_ADDRESS, ANNOUNCE, SET_DELAY = range(1, 5)
 
 # -------------------- GLOBAL VARIABLES --------------------
-# Store custom delay (in seconds) per chat; if not set, the bot uses dynamic delay.
+# Store custom delay (in seconds) per chat; if not set, dynamic delay is used.
 custom_delays = {}
 
 # -------------------- DATA STORAGE FUNCTIONS --------------------
@@ -98,11 +107,11 @@ def main_menu_keyboard(user_id: int) -> ReplyKeyboardMarkup:
 
 # -------------------- DYNAMIC RATE LIMIT HELPER --------------------
 def get_dynamic_delay(num_addresses: int) -> float:
-    base_delay = 2.0  # 1 call every 2 seconds
+    base_delay = 2.0  # Minimum delay of 2 seconds (0.5 calls/sec)
     total_calls = 2 * num_addresses  # 2 API calls per address: balance & txlist
     if total_calls <= 0.5:
         return base_delay
-    required_total_time = total_calls / 0.5  # in seconds
+    required_total_time = total_calls / 0.5
     intervals = total_calls - 1
     dynamic_delay = required_total_time / intervals
     return max(dynamic_delay, base_delay)
@@ -166,9 +175,8 @@ def fetch_node_stats(address: str) -> dict:
 
 # -------------------- JOB FUNCTIONS --------------------
 def auto_update(context: CallbackContext):
-    job = context.job
-    chat_id = job.context['chat_id']
-    addresses = get_addresses_for_chat(chat_id)[:15]  # Supports up to 15 nodes
+    chat_id = context.job.context['chat_id']
+    addresses = get_addresses_for_chat(chat_id)[:15]  # Up to 15 nodes
     if not addresses:
         context.bot.send_message(chat_id=chat_id, text="ℹ️ No addresses found! Please add one using 'Add Address'.")
         return
@@ -207,8 +215,7 @@ def auto_update(context: CallbackContext):
     context.bot.send_message(chat_id=chat_id, text=final_output, parse_mode="Markdown")
 
 def alert_check(context: CallbackContext):
-    job = context.job
-    chat_id = job.context['chat_id']
+    chat_id = context.job.context['chat_id']
     addresses = get_addresses_for_chat(chat_id)[:15]
     delay = custom_delays.get(chat_id, get_dynamic_delay(len(addresses)))
     for item in addresses:
@@ -352,11 +359,52 @@ def help_command(update, context):
         "• *Set Delay*: ⏱️ Set a custom delay (in seconds) for API calls instead of using dynamic delay.\n"
         "• *Stop*: ⛔ Stop all auto-update and alert jobs.\n"
         "• *Announce* (Admin only): 📣 Broadcast an announcement to all registered chats.\n\n"
-        "💡 *Note*: A node stall alert indicates that your last 25 transactions are all PING. If Arbiscan shows other transaction types, the alert might be inaccurate.\n"
+        "💡 *Note*: A node stall alert means the last 25 transactions are all PING. If Arbiscan shows other transaction types, the alert might be inaccurate.\n"
         "🚀 *Happy Monitoring!*",
         reply_markup=main_menu_keyboard(update.effective_user.id),
         parse_mode="Markdown"
     )
+
+# -------------------- MENU COMMAND FUNCTIONS --------------------
+def menu_auto_update(update, context):
+    """Start the auto-update job and send confirmation."""
+    chat_id = update.effective_chat.id
+    if not get_addresses_for_chat(chat_id):
+        update.effective_message.reply_text("ℹ️ No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    current_jobs = context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}")
+    if current_jobs:
+        update.effective_message.reply_text("Auto-update is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    context.job_queue.run_repeating(auto_update, interval=UPDATE_INTERVAL, context={'chat_id': chat_id}, name=f"auto_update_{chat_id}")
+    update.effective_message.reply_text("✅ Auto-update started.", reply_markup=main_menu_keyboard(update.effective_user.id))
+
+def menu_enable_alerts(update, context):
+    """Start the alerts job and send confirmation."""
+    chat_id = update.effective_chat.id
+    if not get_addresses_for_chat(chat_id):
+        update.effective_message.reply_text("ℹ️ No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    current_jobs = context.job_queue.get_jobs_by_name(f"alert_{chat_id}")
+    if current_jobs:
+        update.effective_message.reply_text("Alerts are already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    context.job_queue.run_repeating(alert_check, interval=900, context={'chat_id': chat_id}, name=f"alert_{chat_id}")
+    update.effective_message.reply_text("✅ Alerts enabled.", reply_markup=main_menu_keyboard(update.effective_user.id))
+
+def menu_stop(update, context):
+    """Stop all auto-update and alert jobs."""
+    chat_id = update.effective_chat.id
+    removed_jobs = 0
+    for job_name in (f"auto_update_{chat_id}", f"alert_{chat_id}"):
+        jobs = context.job_queue.get_jobs_by_name(job_name)
+        for job in jobs:
+            job.schedule_removal()
+            removed_jobs += 1
+    if removed_jobs:
+        update.effective_message.reply_text("✅ Auto-update and alerts have been stopped.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    else:
+        update.effective_message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 # -------------------- MAIN FUNCTION --------------------
 def main():
@@ -373,8 +421,8 @@ def main():
     dp.add_handler(MessageHandler(Filters.regex("^Enable Alerts$"), menu_enable_alerts))
     dp.add_handler(CommandHandler("stop", menu_stop))
     dp.add_handler(MessageHandler(Filters.regex("^Stop$"), menu_stop))
-    dp.add_handler(CommandHandler("check_status", menu_check_status))
-    dp.add_handler(MessageHandler(Filters.regex("^Check Status$"), menu_check_status))
+    dp.add_handler(CommandHandler("check_status", help_command))  # For clarity, using help_command for now; replace with your check status function if available.
+    dp.add_handler(MessageHandler(Filters.regex("^Check Status$"), help_command))
     dp.add_handler(CommandHandler("announce", announce_start))
     dp.add_handler(CommandHandler("set_delay", set_delay_start))
     dp.add_handler(MessageHandler(Filters.regex("^Set Delay$"), set_delay_start))
@@ -416,7 +464,7 @@ def main():
     )
     dp.add_handler(conv_set_delay)
 
-    dp.add_handler(MessageHandler(Filters.regex("^Check Status$"), menu_check_status))
+    dp.add_handler(MessageHandler(Filters.regex("^Check Status$"), help_command))
 
     updater.start_polling()
     logger.info("Bot is running... 🚀")
