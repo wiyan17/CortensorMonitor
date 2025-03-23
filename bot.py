@@ -465,21 +465,41 @@ def menu_stop(update, context):
         update.effective_message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def help_command(update, context):
-    update.effective_message.reply_text(
-        "📖 *Cortensor Node Monitoring Bot Guide*\n\n"
-        "• *Add Address*: ➕ Add a wallet address with format `<wallet_address>,<label>` (optional label).\n"
-        "• *Remove Address*: ➖ Remove an added wallet address.\n"
-        "• *Check Status*: 📊 Show node status, balance, last activity, health, and stall info.\n"
-        "• *Auto Update*: 🔄 Start auto update; the bot sends updates automatically based on your set interval.\n"
-        "• *Enable Alerts*: 🔔 Enable alerts if no transactions occur for 15 minutes or if a node stall is detected.\n"
-        "• *Set Delay*: ⏱️ Set a custom auto update interval (in seconds, minimum 60 seconds).\n"
-        "• *Stop*: ⛔ Stop all auto update and alert jobs.\n"
-        "• *Announce* (Admin only): 📣 Send an announcement to all registered chats.\n\n"
-        f"💡 Maximum nodes per chat: 15\n\n"
-        "🚀 *Happy Monitoring!*",
-        reply_markup=main_menu_keyboard(update.effective_user.id),
-        parse_mode="Markdown"
+    help_text = (
+        "📖 *Cortensor Node Monitoring Bot - Help Guide*\n\n"
+        "Below is a list of all available commands and their functions:\n\n"
+        "• *Add Address*\n"
+        "  - *Usage*: Send your wallet address using the format `<wallet_address>,<label>` (the label is optional).\n"
+        "  - *Example*: `0xABC123...7890,My Node`\n"
+        "  - *Description*: Adds the specified wallet address to your monitoring list. You can monitor up to 15 nodes per chat.\n\n"
+        "• *Remove Address*\n"
+        "  - *Usage*: Select an address from your list to remove.\n"
+        "  - *Description*: Removes a wallet address from your monitoring list.\n\n"
+        "• *Check Status*\n"
+        "  - *Usage*: Simply send the command.\n"
+        "  - *Description*: Provides a detailed update on each node, including balance, online status, last activity, health metrics, and stall status.\n\n"
+        "• *Auto Update*\n"
+        "  - *Usage*: Activate by sending the command.\n"
+        "  - *Description*: Starts periodic auto updates (default every 5 minutes or your custom interval) to deliver real-time node status.\n\n"
+        "• *Enable Alerts*\n"
+        "  - *Usage*: Activate by sending the command.\n"
+        "  - *Description*: Monitors your nodes continuously and sends alerts if no transactions are detected within 15 minutes or if a node stall is observed.\n\n"
+        "• *Set Delay*\n"
+        "  - *Usage*: After sending the command, enter your desired auto update interval (in seconds, minimum 60 seconds).\n"
+        "  - *Description*: Allows you to customize the interval for auto updates.\n\n"
+        "• *Stop*\n"
+        "  - *Usage*: Simply send the command.\n"
+        "  - *Description*: Stops all active auto update and alert jobs.\n\n"
+        "• *Announce* (Admin only)\n"
+        "  - *Usage*: Accessible only to administrators. Send the command followed by your announcement message.\n"
+        "  - *Description*: Broadcasts an announcement to all registered chats.\n\n"
+        "• *Help*\n"
+        "  - *Usage*: Simply send the command.\n"
+        "  - *Description*: Displays this help guide with detailed information on all commands.\n\n"
+        "💡 *Note*: Maximum nodes per chat: 15\n"
+        "🚀 *Happy Monitoring!*"
     )
+    update.effective_message.reply_text(help_text, parse_mode="Markdown", disable_web_page_preview=True)
 
 def start_command(update, context):
     user_id = update.effective_user.id
