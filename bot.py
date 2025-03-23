@@ -349,7 +349,7 @@ def help_command(update, context):
         "• *Check Status*: 📊 Get a consolidated update of your node's balance, status, recent activity, health, and stall info.\n"
         "• *Auto Update*: 🔄 Receive automatic updates every 5 minutes with combined info.\n"
         "• *Enable Alerts*: 🔔 Monitor your node continuously and get alerted if no transactions occur for 15 minutes or if a node stall is detected (last 25 transactions are all PING).\n"
-        "• *Set Delay*: ⏱️ Set a custom delay (in seconds) for API calls instead of using the dynamic delay.\n"
+        "• *Set Delay*: ⏱️ Set a custom delay (in seconds) for API calls instead of using dynamic delay.\n"
         "• *Stop*: ⛔ Stop all auto-update and alert jobs.\n"
         "• *Announce* (Admin only): 📣 Broadcast an announcement to all registered chats.\n\n"
         "💡 *Note*: A node stall alert indicates that your last 25 transactions are all PING. If Arbiscan shows other transaction types, the alert might be inaccurate.\n"
@@ -357,54 +357,6 @@ def help_command(update, context):
         reply_markup=main_menu_keyboard(update.effective_user.id),
         parse_mode="Markdown"
     )
-
-# -------------------- MENU COMMAND FUNCTIONS --------------------
-def menu_auto_update(update, context):
-    """Command function: start the auto-update job and send a confirmation message."""
-    chat_id = update.effective_chat.id
-    if not get_addresses_for_chat(chat_id):
-        update.effective_message.reply_text("ℹ️ No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    current_jobs = context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}")
-    if current_jobs:
-        update.effective_message.reply_text("Auto-update is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    context.job_queue.run_repeating(auto_update, interval=UPDATE_INTERVAL, context={'chat_id': chat_id}, name=f"auto_update_{chat_id}")
-    update.effective_message.reply_text("✅ Auto-update started.", reply_markup=main_menu_keyboard(update.effective_user.id))
-
-def menu_enable_alerts(update, context):
-    """Command function: start the alerts job and send a confirmation message."""
-    chat_id = update.effective_chat.id
-    if not get_addresses_for_chat(chat_id):
-        update.effective_message.reply_text("ℹ️ No addresses found! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    current_jobs = context.job_queue.get_jobs_by_name(f"alert_{chat_id}")
-    if current_jobs:
-        update.effective_message.reply_text("Alerts are already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    context.job_queue.run_repeating(alert_check, interval=900, context={'chat_id': chat_id}, name=f"alert_{chat_id}")
-    update.effective_message.reply_text("✅ Alerts enabled.", reply_markup=main_menu_keyboard(update.effective_user.id))
-
-def menu_stop(update, context):
-    """Command function: stop all auto-update and alert jobs."""
-    chat_id = update.effective_chat.id
-    removed_jobs = 0
-    for job_name in (f"auto_update_{chat_id}", f"alert_{chat_id}"):
-        jobs = context.job_queue.get_jobs_by_name(job_name)
-        for job in jobs:
-            job.schedule_removal()
-            removed_jobs += 1
-    if removed_jobs:
-        update.effective_message.reply_text("✅ Auto-update and alerts have been stopped.", reply_markup=main_menu_keyboard(update.effective_user.id))
-    else:
-        update.effective_message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
-
-# -------------------- ERROR HANDLER --------------------
-def error_handler(update, context):
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
-    error_text = f"⚠️ An error occurred: {context.error}"
-    for admin_id in ADMIN_IDS:
-        context.bot.send_message(chat_id=admin_id, text=error_text)
 
 # -------------------- MAIN FUNCTION --------------------
 def main():
@@ -470,7 +422,7 @@ def main():
     logger.info("Bot is running... 🚀")
     updater.idle()
 
-# Duplicate start_command for redundancy.
+# Duplicate start_command for fallback.
 def start_command(update, context):
     user_id = update.effective_user.id
     update.effective_message.reply_text(
