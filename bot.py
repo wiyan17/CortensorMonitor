@@ -3,9 +3,8 @@
 Cortensor Node Monitoring Bot – Telegram Reply Keyboard Version
 
 This bot provides real-time node monitoring via Telegram.
-It supports commands for adding/removing wallet addresses (with optional labels),
-checking status, enabling auto updates and alerts, setting a custom API delay,
-stopping jobs, and admin announcements.
+It supports commands for adding/removing wallet addresses (with optional labels and custom API delay),
+checking status, enabling auto updates and alerts, and admin announcements.
 All outputs are in English with clear explanations and creative emoji decorations.
 """
 
@@ -25,7 +24,7 @@ load_dotenv()
 TOKEN = os.getenv("TOKEN")
 API_KEY = os.getenv("API_KEY")
 UPDATE_INTERVAL = 300  # 5 minutes update interval
-# Base URL for dashboard links (new endpoint)
+# Base URL for the dashboard (new endpoint)
 CORTENSOR_API = "https://dashboard-devnet3.cortensor.network"
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
@@ -39,7 +38,7 @@ WIB = timezone(timedelta(hours=7))  # WIB (UTC+7)
 ADD_ADDRESS, REMOVE_ADDRESS, ANNOUNCE, SET_DELAY = range(1, 5)
 
 # -------------------- GLOBAL VARIABLES --------------------
-# Custom delay (in seconds) stored per chat; if not set, the bot uses dynamic delay.
+# Store custom delay (in seconds) per chat; if not set, the bot uses dynamic delay.
 custom_delays = {}
 
 # -------------------- DATA STORAGE FUNCTIONS --------------------
@@ -103,7 +102,7 @@ def get_dynamic_delay(num_addresses: int) -> float:
     total_calls = 2 * num_addresses  # 2 API calls per address: balance & txlist
     if total_calls <= 0.5:
         return base_delay
-    required_total_time = total_calls / 0.5  # in seconds
+    required_total_time = total_calls / 0.5
     intervals = total_calls - 1
     dynamic_delay = required_total_time / intervals
     return max(dynamic_delay, base_delay)
@@ -190,7 +189,7 @@ def auto_update(context: CallbackContext):
             groups = [latest_25[i*5:(i+1)*5] for i in range(5)]
             health_list = [("🟩" if all(tx.get('isError') == '0' for tx in group) else "🟥") if group else "⬜" for group in groups]
             health_status = " ".join(health_list)
-            stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
+            stall_status = "🚨 Node Stall" if len(latest_25) >= 25 and all(tx.get('input', '').lower().startswith("0x5c36b186") for tx in latest_25) else "✅ Normal"
         else:
             status = "🔴 Offline"
             last_activity = "N/A"
@@ -237,12 +236,12 @@ def alert_check(context: CallbackContext):
 
 # -------------------- CONVERSATION HANDLER FUNCTIONS --------------------
 def set_delay_start(update, context):
-    """Initiate setting a custom delay for API calls (in seconds)."""
+    """Initiate setting a custom delay (in seconds) for API calls."""
     update.effective_message.reply_text("Please enter the custom delay (in seconds) for API calls (minimum 0.5):", reply_markup=ReplyKeyboardRemove())
     return SET_DELAY
 
 def set_delay_receive(update, context):
-    """Receive and store the custom delay value for the chat."""
+    """Receive and store the custom delay for this chat."""
     chat_id = update.effective_chat.id
     text = update.effective_message.text.strip()
     try:
@@ -289,7 +288,7 @@ def add_address_receive(update, context):
     return ConversationHandler.END
 
 def remove_address_start(update, context):
-    """Initiate removing a wallet address."""
+    """Initiate removal of a wallet address."""
     chat_id = update.effective_chat.id
     addresses = get_addresses_for_chat(chat_id)
     if not addresses:
@@ -326,7 +325,7 @@ def announce_start(update, context):
     return ANNOUNCE
 
 def announce_receive(update, context):
-    """Process the announcement message and broadcast it to all registered chats."""
+    """Process the announcement message and broadcast it to all chats."""
     message = update.effective_message.text
     data = load_data()
     if not data:
@@ -360,10 +359,10 @@ def help_command(update, context):
         "• *Check Status*: 📊 Get a consolidated update of your node's balance, status, recent activity, health, and stall info.\n"
         "• *Auto Update*: 🔄 Receive automatic updates every 5 minutes with combined info.\n"
         "• *Enable Alerts*: 🔔 Monitor your node continuously and get alerted if no transactions occur for 15 minutes or if a node stall is detected (last 25 transactions are all PING).\n"
-        "• *Set Delay*: ⏱️ Set a custom delay (in seconds) for API calls instead of using dynamic delay.\n"
+        "• *Set Delay*: ⏱️ Set a custom delay (in seconds) for API calls instead of using the dynamic delay.\n"
         "• *Stop*: ⛔ Stop all auto-update and alert jobs.\n"
         "• *Announce* (Admin only): 📣 Broadcast an announcement to all registered chats.\n\n"
-        "💡 *Note*: A node stall alert indicates that your last 25 transactions are all PING. If Arbiscan shows other types, the alert might be inaccurate.\n"
+        "💡 *Note*: A node stall alert means the last 25 transactions are all PING. If Arbiscan shows other transaction types, the alert might be inaccurate.\n"
         "🚀 *Happy Monitoring!*",
         reply_markup=main_menu_keyboard(update.effective_user.id),
         parse_mode="Markdown"
@@ -440,7 +439,7 @@ def main():
     logger.info("Bot is running... 🚀")
     updater.idle()
 
-# Duplicate start_command for redundancy.
+# Duplicate start_command for fallback.
 def start_command(update, context):
     user_id = update.effective_user.id
     update.effective_message.reply_text(
