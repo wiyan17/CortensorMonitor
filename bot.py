@@ -58,7 +58,7 @@ ADD_ADDRESS, REMOVE_ADDRESS, ANNOUNCE, SET_INTERVAL = range(1, 5)
 def load_data() -> dict:
     """
     Load data from DATA_FILE. If the file's content is not a dict,
-    log a warning and overwrite the file with an empty dict.
+    log a warning, reset the file to an empty dict, and return an empty dict.
     """
     if os.path.exists(DATA_FILE):
         try:
@@ -268,6 +268,118 @@ def alert_check(context: CallbackContext):
                 text=f"🚨 *Alert for {shorten_address(wallet)}" + (f" ({label})" if label else "") + "*:\n- No transactions found!\n[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{wallet}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{wallet})",
                 parse_mode="Markdown"
             )
+
+# -------------------- CONVERSATION HANDLER FUNCTIONS --------------------
+def add_address_start(update, context):
+    update.effective_message.reply_text(
+        "Please send the wallet address (with format `<wallet_address>,<label>` if you want to add a label).\nExample: 0xABC123...7890,My Node\n(Send /cancel to abort)",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    return ADD_ADDRESS
+
+def add_address_receive(update, context):
+    chat_id = update.effective_chat.id
+    text = update.effective_message.text.strip()
+    parts = [x.strip() for x in text.split(",")]
+    wallet = parts[0].lower()
+    label = parts[1] if len(parts) > 1 else ""
+    if not wallet.startswith("0x") or len(wallet) != 42:
+        update.effective_message.reply_text("❌ Invalid wallet address! It must start with '0x' and be 42 characters long.\nTry again or send /cancel to abort.")
+        return ADD_ADDRESS
+    addresses = get_addresses_for_chat(chat_id)
+    if any((item.get("address") if isinstance(item, dict) else item) == wallet for item in addresses):
+        update.effective_message.reply_text("⚠️ Address already exists! Returning to main menu.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    if len(addresses) >= 15:
+        update.effective_message.reply_text("❌ Maximum of 15 nodes per chat reached! Returning to main menu.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    addresses.append({"address": wallet, "label": label})
+    update_addresses_for_chat(chat_id, addresses)
+    update.effective_message.reply_text(f"✅ Added: {shorten_address(wallet)}" + (f" ({label})" if label else ""), reply_markup=main_menu_keyboard(update.effective_user.id))
+    return ConversationHandler.END
+
+def remove_address_start(update, context):
+    chat_id = update.effective_chat.id
+    addresses = get_addresses_for_chat(chat_id)
+    if not addresses:
+        update.effective_message.reply_text("No addresses found to remove.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    keyboard = []
+    for item in addresses:
+        wallet, label = parse_address_item(item)
+        display = f"{wallet}" + (f" ({label})" if label else "")
+        keyboard.append([display])
+    keyboard.append(["Cancel"])
+    update.effective_message.reply_text("Select the address you want to remove:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True))
+    return REMOVE_ADDRESS
+
+def remove_address_receive(update, context):
+    chat_id = update.effective_chat.id
+    choice = update.effective_message.text.strip()
+    if choice.lower() == "cancel":
+        update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    addresses = get_addresses_for_chat(chat_id)
+    new_addresses = []
+    found = False
+    for item in addresses:
+        wallet, label = parse_address_item(item)
+        display = f"{wallet}" + (f" ({label})" if label else "")
+        if display == choice:
+            found = True
+            continue
+        new_addresses.append(item)
+    if not found:
+        update.effective_message.reply_text("❌ Address not found.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    update_addresses_for_chat(chat_id, new_addresses)
+    update.effective_message.reply_text("✅ Address removed.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    return ConversationHandler.END
+
+def set_interval_start(update, context):
+    update.effective_message.reply_text(
+        "Please enter the desired auto update interval (in seconds).\nExample: 300\nMinimum is 60 seconds.\n(Send /cancel to abort)",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    return SET_INTERVAL
+
+def set_interval_receive(update, context):
+    chat_id = update.effective_chat.id
+    try:
+        interval_val = float(update.effective_message.text.strip())
+        if interval_val < MIN_AUTO_UPDATE_INTERVAL:
+            update.effective_message.reply_text(f"Interval cannot be less than {MIN_AUTO_UPDATE_INTERVAL} seconds. Try again or send /cancel.")
+            return SET_INTERVAL
+        update_auto_update_interval(chat_id, interval_val)
+        update.effective_message.reply_text(f"✅ Auto update interval set to {interval_val} seconds.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    except ValueError:
+        update.effective_message.reply_text("❌ Invalid input. Please enter a number (e.g., 300).")
+        return SET_INTERVAL
+    return ConversationHandler.END
+
+def announce_start(update, context):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        update.effective_message.reply_text("❌ You are not authorized to use this command.", reply_markup=main_menu_keyboard(user_id))
+        return ConversationHandler.END
+    update.effective_message.reply_text("Please send the announcement message:", reply_markup=ReplyKeyboardRemove())
+    return ANNOUNCE
+
+def announce_receive(update, context):
+    message = update.effective_message.text
+    data = load_data()
+    if not data:
+        update.effective_message.reply_text("No chats found to send the announcement.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    count = 0
+    for chat in data.keys():
+        try:
+            context.bot.send_message(chat_id=int(chat), text=message)
+            count += 1
+        except Exception as e:
+            logger.error(f"Error sending announcement to chat {chat}: {e}")
+    update.effective_message.reply_text(f"📣 Announcement sent to {count} chats.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    return ConversationHandler.END
 
 # -------------------- COMMAND FUNCTIONS --------------------
 def menu_check_status(update, context):
