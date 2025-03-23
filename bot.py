@@ -38,11 +38,11 @@ load_dotenv()
 # -------------------- CONFIGURATION --------------------
 TOKEN = os.getenv("TOKEN")
 API_KEY = os.getenv("API_KEY")
-DEFAULT_UPDATE_INTERVAL = 300  # Default auto update interval: 5 minutes
+DEFAULT_UPDATE_INTERVAL = 300  # 5 minutes default auto update interval
 CORTENSOR_API = os.getenv("CORTENSOR_API", "https://dashboard-devnet3.cortensor.network")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
-MIN_AUTO_UPDATE_INTERVAL = 60  # Minimum allowed auto update interval in seconds
+MIN_AUTO_UPDATE_INTERVAL = 60  # Minimum auto update interval (in seconds)
 
 # -------------------- INITIALIZATION --------------------
 logging.basicConfig(
@@ -57,8 +57,8 @@ ADD_ADDRESS, REMOVE_ADDRESS, ANNOUNCE, SET_INTERVAL = range(1, 5)
 # -------------------- DATA STORAGE FUNCTIONS --------------------
 def load_data() -> dict:
     """
-    Load data from DATA_FILE. If the file's content is not a dict,
-    log a warning, reset the file to an empty dict, and return an empty dict.
+    Load data from DATA_FILE. If the content is not a dict, log a warning, 
+    reset the file to an empty dict, and return an empty dict.
     """
     if os.path.exists(DATA_FILE):
         try:
@@ -81,10 +81,16 @@ def save_data(data: dict):
 
 def get_chat_data(chat_id: int) -> dict:
     data = load_data()
+    if not isinstance(data, dict):
+        logger.warning("Loaded data is not a dict. Overwriting with empty dict.")
+        data = {}
+        save_data(data)
     return data.get(str(chat_id), {"addresses": [], "auto_update_interval": DEFAULT_UPDATE_INTERVAL})
 
 def update_chat_data(chat_id: int, chat_data: dict):
     data = load_data()
+    if not isinstance(data, dict):
+        data = {}
     data[str(chat_id)] = chat_data
     save_data(data)
 
@@ -107,9 +113,8 @@ def update_auto_update_interval(chat_id: int, interval: float):
 # -------------------- HELPER FUNCTION --------------------
 def parse_address_item(item):
     """
-    Return the wallet and label as a tuple.
-    If the stored item is a dictionary, extract the values;
-    if it's a plain string, return it with an empty label.
+    Return a tuple (wallet, label) from the stored address item.
+    If the item is a dict, extract its "address" and "label"; otherwise, assume it's a string.
     """
     if isinstance(item, dict):
         return item.get("address"), item.get("label", "")
@@ -469,33 +474,33 @@ def help_command(update, context):
         "📖 *Cortensor Node Monitoring Bot - Help Guide*\n\n"
         "Below is a list of all available commands and their functions:\n\n"
         "• *Add Address*\n"
-        "  - *Usage*: Send your wallet address using the format `<wallet_address>,<label>` (the label is optional).\n"
+        "  - *Usage*: Send your wallet address in the format `<wallet_address>,<label>` (the label is optional).\n"
         "  - *Example*: `0xABC123...7890,My Node`\n"
-        "  - *Description*: Adds the specified wallet address to your monitoring list. You can monitor up to 15 nodes per chat.\n\n"
+        "  - *Description*: Adds the specified wallet address to your monitoring list (maximum 15 nodes per chat).\n\n"
         "• *Remove Address*\n"
-        "  - *Usage*: Select an address from your list to remove.\n"
+        "  - *Usage*: Choose an address from your list to remove.\n"
         "  - *Description*: Removes a wallet address from your monitoring list.\n\n"
         "• *Check Status*\n"
         "  - *Usage*: Simply send the command.\n"
-        "  - *Description*: Provides a detailed update on each node, including balance, online status, last activity, health metrics, and stall status.\n\n"
+        "  - *Description*: Provides detailed status updates for each node (balance, online status, last activity, health, stall).\n\n"
         "• *Auto Update*\n"
         "  - *Usage*: Activate by sending the command.\n"
-        "  - *Description*: Starts periodic auto updates (default every 5 minutes or your custom interval) to deliver real-time node status.\n\n"
+        "  - *Description*: Starts periodic auto updates (default every 5 minutes or as set) for real-time node status.\n\n"
         "• *Enable Alerts*\n"
         "  - *Usage*: Activate by sending the command.\n"
-        "  - *Description*: Monitors your nodes continuously and sends alerts if no transactions are detected within 15 minutes or if a node stall is observed.\n\n"
+        "  - *Description*: Monitors nodes continuously and sends alerts if no transactions occur for 15 minutes or if a node stall is detected.\n\n"
         "• *Set Delay*\n"
         "  - *Usage*: After sending the command, enter your desired auto update interval (in seconds, minimum 60 seconds).\n"
-        "  - *Description*: Allows you to customize the interval for auto updates.\n\n"
+        "  - *Description*: Customizes the interval for auto updates.\n\n"
         "• *Stop*\n"
         "  - *Usage*: Simply send the command.\n"
         "  - *Description*: Stops all active auto update and alert jobs.\n\n"
         "• *Announce* (Admin only)\n"
-        "  - *Usage*: Accessible only to administrators. Send the command followed by your announcement message.\n"
+        "  - *Usage*: Only administrators can use this command. Send the command followed by your announcement message.\n"
         "  - *Description*: Broadcasts an announcement to all registered chats.\n\n"
         "• *Help*\n"
         "  - *Usage*: Simply send the command.\n"
-        "  - *Description*: Displays this help guide with detailed information on all commands.\n\n"
+        "  - *Description*: Displays this help guide.\n\n"
         "💡 *Note*: Maximum nodes per chat: 15\n"
         "🚀 *Happy Monitoring!*"
     )
