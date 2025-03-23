@@ -56,11 +56,16 @@ ADD_ADDRESS, REMOVE_ADDRESS, ANNOUNCE, SET_INTERVAL = range(1, 5)
 
 # -------------------- DATA STORAGE FUNCTIONS --------------------
 def load_data() -> dict:
+    """
+    Load data from DATA_FILE. If the file's content is not a dict,
+    log a warning and overwrite the file with an empty dict.
+    """
     if os.path.exists(DATA_FILE):
         try:
             data = json.load(open(DATA_FILE, "r"))
             if not isinstance(data, dict):
-                # If data is not a dict, return an empty dict.
+                logger.warning("Data file is not in the expected format. Resetting data.")
+                save_data({})
                 return {}
             return data
         except Exception as e:
@@ -76,15 +81,10 @@ def save_data(data: dict):
 
 def get_chat_data(chat_id: int) -> dict:
     data = load_data()
-    # Ensure that data is a dict.
-    if not isinstance(data, dict):
-        data = {}
     return data.get(str(chat_id), {"addresses": [], "auto_update_interval": DEFAULT_UPDATE_INTERVAL})
 
 def update_chat_data(chat_id: int, chat_data: dict):
     data = load_data()
-    if not isinstance(data, dict):
-        data = {}
     data[str(chat_id)] = chat_data
     save_data(data)
 
@@ -427,21 +427,6 @@ def menu_auto_update(update, context):
         return
     interval = get_auto_update_interval(chat_id)
     current_jobs = context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}")
-    if current_jobs:
-        update.effective_message.reply_text("Auto update is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    context.job_queue.run_repeating(auto_update, interval=interval, context={'chat_id': chat_id}, name=f"auto_update_{chat_id}")
-    update.effective_message.reply_text(
-        f"✅ Auto update started. (Interval: {interval} seconds)\n\nThe bot will send node updates automatically.",
-        reply_markup=main_menu_keyboard(update.effective_user.id)
-    )
-
-def menu_enable_alerts(update, context):
-    chat_id = update.effective_chat.id
-    if not get_addresses_for_chat(chat_id):
-        update.effective_message.reply_text("No addresses registered! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    current_jobs = context.job_queue.get_jobs_by_name(f"alert_{chat_id}")
     if current_jobs:
         update.effective_message.reply_text("Alerts are already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
