@@ -49,8 +49,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-# WIB (UTC+7)
-WIB = timezone(timedelta(hours=7))
+WIB = timezone(timedelta(hours=7))  # WIB (UTC+7)
 
 # -------------------- CONVERSATION STATES --------------------
 ADD_ADDRESS, REMOVE_ADDRESS, ANNOUNCE, SET_INTERVAL = range(1, 5)
@@ -59,8 +58,11 @@ ADD_ADDRESS, REMOVE_ADDRESS, ANNOUNCE, SET_INTERVAL = range(1, 5)
 def load_data() -> dict:
     if os.path.exists(DATA_FILE):
         try:
-            with open(DATA_FILE, "r") as f:
-                return json.load(f)
+            data = json.load(open(DATA_FILE, "r"))
+            if not isinstance(data, dict):
+                # If data is not a dict, return an empty dict.
+                return {}
+            return data
         except Exception as e:
             logger.error(f"Error loading data: {e}")
     return {}
@@ -74,10 +76,15 @@ def save_data(data: dict):
 
 def get_chat_data(chat_id: int) -> dict:
     data = load_data()
+    # Ensure that data is a dict.
+    if not isinstance(data, dict):
+        data = {}
     return data.get(str(chat_id), {"addresses": [], "auto_update_interval": DEFAULT_UPDATE_INTERVAL})
 
 def update_chat_data(chat_id: int, chat_data: dict):
     data = load_data()
+    if not isinstance(data, dict):
+        data = {}
     data[str(chat_id)] = chat_data
     save_data(data)
 
@@ -100,8 +107,9 @@ def update_auto_update_interval(chat_id: int, interval: float):
 # -------------------- HELPER FUNCTION --------------------
 def parse_address_item(item):
     """
-    Ensure that the address item is returned as a tuple: (wallet, label)
-    Even if the stored item is a plain string.
+    Return the wallet and label as a tuple.
+    If the stored item is a dictionary, extract the values;
+    if it's a plain string, return it with an empty label.
     """
     if isinstance(item, dict):
         return item.get("address"), item.get("label", "")
@@ -202,7 +210,6 @@ def auto_update(context: CallbackContext):
     if not addresses:
         context.bot.send_message(chat_id=chat_id, text="ℹ️ No addresses found! Please add one using 'Add Address'.")
         return
-    # Use the auto update interval stored for the chat for scheduling
     output_lines = []
     for item in addresses:
         wallet, label = parse_address_item(item)
@@ -280,7 +287,6 @@ def add_address_receive(update, context):
         update.effective_message.reply_text("❌ Invalid wallet address! It must start with '0x' and be 42 characters long.\nTry again or send /cancel to abort.")
         return ADD_ADDRESS
     addresses = get_addresses_for_chat(chat_id)
-    # Allow both dict and string formats
     if any((item.get("address") if isinstance(item, dict) else item) == wallet for item in addresses):
         update.effective_message.reply_text("⚠️ Address already exists! Returning to main menu.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return ConversationHandler.END
@@ -419,7 +425,6 @@ def menu_auto_update(update, context):
     if not get_addresses_for_chat(chat_id):
         update.effective_message.reply_text("No addresses registered! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
-    # Use the custom auto update interval if set
     interval = get_auto_update_interval(chat_id)
     current_jobs = context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}")
     if current_jobs:
