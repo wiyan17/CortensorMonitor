@@ -1,20 +1,4 @@
 #!/usr/bin/env python3
-"""
-Cortensor Node Monitoring Bot – Telegram Reply Keyboard Version
-
-Features:
-• Add Address (with optional label, format: <wallet_address>,<label>)
-• Remove Address
-• Check Status
-• Auto Update
-• Enable Alerts
-• Set Delay (custom auto update interval per chat)
-• Stop
-• Announce (admin only)
-
-Maximum nodes per chat: 25
-"""
-
 import logging
 import requests
 import json
@@ -27,31 +11,21 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# -------------------- CONFIGURATION --------------------
 TOKEN = os.getenv("TOKEN")
 API_KEY = os.getenv("API_KEY")
-DEFAULT_UPDATE_INTERVAL = 300  # Default auto update interval (5 minutes)
-# Base URL for dashboard links
+DEFAULT_UPDATE_INTERVAL = 300
 CORTENSOR_API = os.getenv("CORTENSOR_API", "https://dashboard-devnet3.cortensor.network")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
-MIN_AUTO_UPDATE_INTERVAL = 60  # Minimum auto update interval in seconds
+MIN_AUTO_UPDATE_INTERVAL = 60
 
-# -------------------- INITIALIZATION --------------------
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
-WIB = timezone(timedelta(hours=7))  # WIB (UTC+7)
+WIB = timezone(timedelta(hours=7))
 
-# -------------------- CONVERSATION STATES --------------------
 ADD_ADDRESS, REMOVE_ADDRESS, ANNOUNCE, SET_DELAY = range(1, 5)
-
-# -------------------- GLOBAL VARIABLES --------------------
-# Store custom delay (in seconds) per chat; if not set, dynamic delay is used.
 custom_delays = {}
 
-# -------------------- DATA STORAGE FUNCTIONS --------------------
 def load_data() -> dict:
     if os.path.exists(DATA_FILE):
         try:
@@ -93,17 +67,11 @@ def update_auto_update_interval(chat_id: int, interval: float):
     chat_data["auto_update_interval"] = interval
     update_chat_data(chat_id, chat_data)
 
-# -------------------- HELPER FUNCTION --------------------
 def parse_address_item(item):
-    """
-    Return a tuple (wallet, label) from the stored address item.
-    If the item is a dict, extract its "address" and "label"; otherwise, assume it's a string.
-    """
     if isinstance(item, dict):
         return item.get("address"), item.get("label", "")
     return item, ""
 
-# -------------------- UTILITY FUNCTIONS --------------------
 def shorten_address(address: str) -> str:
     return address[:6] + "..." + address[-4:] if len(address) > 10 else address
 
@@ -121,9 +89,7 @@ def get_age(timestamp: int) -> str:
     minutes = seconds // 60
     return f"{minutes} mins ago" if minutes < 60 else f"{minutes//60} hours ago"
 
-# -------------------- MENU KEYBOARD --------------------
 def main_menu_keyboard(user_id: int) -> ReplyKeyboardMarkup:
-    # Removed the "Help" button.
     keyboard = [
         ["Add Address", "Remove Address"],
         ["Check Status", "Auto Update"],
@@ -134,10 +100,9 @@ def main_menu_keyboard(user_id: int) -> ReplyKeyboardMarkup:
         keyboard.append(["Announce"])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
-# -------------------- DYNAMIC RATE LIMIT HELPER --------------------
 def get_dynamic_delay(num_addresses: int) -> float:
-    base_delay = 2.0  # Minimum delay of 2 seconds (0.5 calls/sec)
-    total_calls = 2 * num_addresses  # 2 API calls per address
+    base_delay = 2.0
+    total_calls = 2 * num_addresses
     if total_calls <= 0.5:
         return base_delay
     required_total_time = total_calls / 0.5
@@ -145,7 +110,6 @@ def get_dynamic_delay(num_addresses: int) -> float:
     dynamic_delay = required_total_time / intervals
     return max(dynamic_delay, base_delay)
 
-# -------------------- API FUNCTIONS --------------------
 def safe_fetch_balance(address: str, delay: float) -> float:
     max_retries = 3
     for attempt in range(max_retries):
@@ -202,7 +166,6 @@ def fetch_node_stats(address: str) -> dict:
         logger.error(f"Node stats error for {address}: {e}")
         return {}
 
-# -------------------- JOB FUNCTIONS --------------------
 def auto_update(context: CallbackContext):
     chat_id = context.job.context['chat_id']
     addresses = get_addresses_for_chat(chat_id)[:25]
@@ -226,8 +189,14 @@ def auto_update(context: CallbackContext):
             health_status = " ".join(health_list)
             if len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25):
                 stall_status = "🚨 Node Stall"
-                stall_duration = get_age(last_tx_time)
-                stall_extra = f" (stale for {stall_duration})"
+                non_ping_timestamp = None
+                for tx in txs:
+                    if not tx.get('input','').lower().startswith("0x5c36b186"):
+                        non_ping_timestamp = int(tx['timeStamp'])
+                        break
+                if non_ping_timestamp is None:
+                    non_ping_timestamp = last_tx_time
+                stall_extra = f" (stale for {get_age(non_ping_timestamp)})"
             else:
                 stall_status = "✅ Normal"
                 stall_extra = ""
@@ -264,7 +233,14 @@ def alert_check(context: CallbackContext):
                 if time_diff > timedelta(minutes=15):
                     msg_lines.append("⏱️ No transactions in the last 15 minutes.")
                 if stall_condition:
-                    stall_duration = get_age(last_tx_time)
+                    non_ping_timestamp = None
+                    for tx in txs:
+                        if not tx.get('input','').lower().startswith("0x5c36b186"):
+                            non_ping_timestamp = int(tx['timeStamp'])
+                            break
+                    if non_ping_timestamp is None:
+                        non_ping_timestamp = last_tx_time
+                    stall_duration = get_age(non_ping_timestamp)
                     msg_lines.append(f"⚠️ Node stall detected (only PING transactions in the last 25, stale for {stall_duration}).")
                 msg_lines.append(f"[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{wallet}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{wallet})")
                 context.bot.send_message(chat_id=chat_id, text="\n".join(msg_lines), parse_mode="Markdown")
@@ -275,7 +251,6 @@ def alert_check(context: CallbackContext):
                 parse_mode="Markdown"
             )
 
-# -------------------- CONVERSATION HANDLER FUNCTIONS --------------------
 def cancel(update, context):
     update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id))
     return ConversationHandler.END
@@ -389,9 +364,65 @@ def announce_receive(update, context):
     update.effective_message.reply_text(f"📣 Announcement sent to {count} chats.", reply_markup=main_menu_keyboard(update.effective_user.id))
     return ConversationHandler.END
 
-# -------------------- MAIN COMMAND FUNCTIONS --------------------
+def start_command(update, context):
+    chat_id = update.effective_user.id
+    update.effective_message.reply_text(
+        "👋 Welcome to the Cortensor Node Monitoring Bot!\nSelect an option from the menu below:",
+        reply_markup=main_menu_keyboard(chat_id)
+    )
+
+def error_handler(update, context):
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+    error_text = f"⚠️ An error occurred: {context.error}"
+    for admin_id in ADMIN_IDS:
+        context.bot.send_message(chat_id=admin_id, text=error_text)
+
+def menu_enable_alerts(update, context):
+    chat_id = update.effective_user.id
+    if not get_addresses_for_chat(chat_id):
+        update.effective_message.reply_text("No addresses registered! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    current_jobs = context.job_queue.get_jobs_by_name(f"alert_{chat_id}")
+    if current_jobs:
+        update.effective_message.reply_text("Alerts are already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    context.job_queue.run_repeating(alert_check, interval=900, context={'chat_id': chat_id}, name=f"alert_{chat_id}")
+    update.effective_message.reply_text(
+        "✅ Alerts enabled.\nThe bot will monitor your nodes and send alerts if no transactions occur for 15 minutes or if a node stall is detected.",
+        reply_markup=main_menu_keyboard(update.effective_user.id)
+    )
+
+def menu_stop(update, context):
+    chat_id = update.effective_user.id
+    removed_jobs = 0
+    for job_name in (f"auto_update_{chat_id}", f"alert_{chat_id}"):
+        jobs = context.job_queue.get_jobs_by_name(job_name)
+        for job in jobs:
+            job.schedule_removal()
+            removed_jobs += 1
+    if removed_jobs:
+        update.effective_message.reply_text("✅ All jobs have been stopped.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    else:
+        update.effective_message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
+
+def menu_auto_update(update, context):
+    chat_id = update.effective_user.id
+    if not get_addresses_for_chat(chat_id):
+        update.effective_message.reply_text("No addresses registered! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    interval = get_auto_update_interval(chat_id)
+    current_jobs = context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}")
+    if current_jobs:
+        update.effective_message.reply_text("Auto update is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    context.job_queue.run_repeating(auto_update, interval=interval, context={'chat_id': chat_id}, name=f"auto_update_{chat_id}")
+    update.effective_message.reply_text(
+        f"✅ Auto update started. (Interval: {interval} seconds)\nThe bot will send node updates automatically.",
+        reply_markup=main_menu_keyboard(update.effective_user.id)
+    )
+
 def menu_check_status(update, context):
-    chat_id = update.effective_chat.id
+    chat_id = update.effective_user.id
     addresses = get_addresses_for_chat(chat_id)
     if not addresses:
         update.effective_message.reply_text("No addresses registered! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
@@ -413,7 +444,14 @@ def menu_check_status(update, context):
             health_status = " ".join(health_list)
             if len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25):
                 stall_status = "🚨 Node Stall"
-                stall_extra = f" (stale for {get_age(last_tx_time)})"
+                non_ping_timestamp = None
+                for tx in txs:
+                    if not tx.get('input','').lower().startswith("0x5c36b186"):
+                        non_ping_timestamp = int(tx['timeStamp'])
+                        break
+                if non_ping_timestamp is None:
+                    non_ping_timestamp = last_tx_time
+                stall_extra = f" (stale for {get_age(non_ping_timestamp)})"
             else:
                 stall_status = "✅ Normal"
                 stall_extra = ""
@@ -434,24 +472,21 @@ def menu_check_status(update, context):
     final_output = "*Check Status*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
     update.effective_message.reply_text(final_output, parse_mode="Markdown", reply_markup=main_menu_keyboard(update.effective_user.id))
 
-def menu_auto_update(update, context):
-    chat_id = update.effective_chat.id
-    if not get_addresses_for_chat(chat_id):
-        update.effective_message.reply_text("No addresses registered! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    interval = get_auto_update_interval(chat_id)
-    current_jobs = context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}")
-    if current_jobs:
-        update.effective_message.reply_text("Auto update is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    context.job_queue.run_repeating(auto_update, interval=interval, context={'chat_id': chat_id}, name=f"auto_update_{chat_id}")
+def start_command(update, context):
+    chat_id = update.effective_user.id
     update.effective_message.reply_text(
-        f"✅ Auto update started. (Interval: {interval} seconds)\nThe bot will send node updates automatically.",
-        reply_markup=main_menu_keyboard(update.effective_user.id)
+        "👋 Welcome to the Cortensor Node Monitoring Bot!\nSelect an option from the menu below:",
+        reply_markup=main_menu_keyboard(chat_id)
     )
 
+def error_handler(update, context):
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+    error_text = f"⚠️ An error occurred: {context.error}"
+    for admin_id in ADMIN_IDS:
+        context.bot.send_message(chat_id=admin_id, text=error_text)
+
 def menu_enable_alerts(update, context):
-    chat_id = update.effective_chat.id
+    chat_id = update.effective_user.id
     if not get_addresses_for_chat(chat_id):
         update.effective_message.reply_text("No addresses registered! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
@@ -466,7 +501,7 @@ def menu_enable_alerts(update, context):
     )
 
 def menu_stop(update, context):
-    chat_id = update.effective_chat.id
+    chat_id = update.effective_user.id
     removed_jobs = 0
     for job_name in (f"auto_update_{chat_id}", f"alert_{chat_id}"):
         jobs = context.job_queue.get_jobs_by_name(job_name)
@@ -478,7 +513,60 @@ def menu_stop(update, context):
     else:
         update.effective_message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
-# -------------------- MAIN COMMANDS --------------------
+def announce_start(update, context):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        update.effective_message.reply_text("❌ You are not authorized to use this command.", reply_markup=main_menu_keyboard(user_id))
+        return ConversationHandler.END
+    update.effective_message.reply_text("Please send the announcement message:", reply_markup=ReplyKeyboardRemove())
+    return ANNOUNCE
+
+def announce_receive(update, context):
+    message = update.effective_message.text
+    data = load_data()
+    if not data:
+        update.effective_message.reply_text("No chats found to send the announcement.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    count = 0
+    for chat in data.keys():
+        try:
+            context.bot.send_message(chat_id=int(chat), text=message)
+            count += 1
+        except Exception as e:
+            logger.error(f"Error sending announcement to chat {chat}: {e}")
+    update.effective_message.reply_text(f"📣 Announcement sent to {count} chats.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    return ConversationHandler.END
+
+def menu_auto_update_wrapper(update, context):
+    menu_auto_update(update, context)
+
+def menu_check_status_wrapper(update, context):
+    menu_check_status(update, context)
+
+def menu_enable_alerts_wrapper(update, context):
+    menu_enable_alerts(update, context)
+
+def menu_stop_wrapper(update, context):
+    menu_stop(update, context)
+
+def menu_enable_alerts(update, context):
+    menu_enable_alerts_wrapper(update, context)
+
+def menu_stop(update, context):
+    menu_stop_wrapper(update, context)
+
+def menu_check_status(update, context):
+    menu_check_status_wrapper(update, context)
+
+def menu_auto_update(update, context):
+    menu_auto_update_wrapper(update, context)
+
+def start_command(update, context):
+    start_command(update, context)
+
+def error_handler(update, context):
+    error_handler(update, context)
+
 def start_command(update, context):
     chat_id = update.effective_user.id
     update.effective_message.reply_text(
@@ -486,20 +574,16 @@ def start_command(update, context):
         reply_markup=main_menu_keyboard(chat_id)
     )
 
-# -------------------- ERROR HANDLER --------------------
 def error_handler(update, context):
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
     error_text = f"⚠️ An error occurred: {context.error}"
     for admin_id in ADMIN_IDS:
         context.bot.send_message(chat_id=admin_id, text=error_text)
 
-# -------------------- MAIN FUNCTION --------------------
 def main():
     updater = Updater(TOKEN)
     dp = updater.dispatcher
-
     logger.info("Bot is starting...")
-
     dp.add_handler(CommandHandler("start", start_command))
     dp.add_handler(CommandHandler("auto_update", menu_auto_update))
     dp.add_handler(MessageHandler(Filters.regex("^Auto Update$"), menu_auto_update))
@@ -513,7 +597,6 @@ def main():
     dp.add_handler(CommandHandler("set_delay", set_delay_start))
     dp.add_handler(MessageHandler(Filters.regex("^Set Delay$"), set_delay_start))
     dp.add_error_handler(error_handler)
-
     conv_add = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Add Address$"), add_address_start)],
         states={
@@ -522,7 +605,6 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_add)
-
     conv_remove = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Remove Address$"), remove_address_start)],
         states={
@@ -531,7 +613,6 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_remove)
-
     conv_announce = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Announce$"), announce_start)],
         states={
@@ -540,7 +621,6 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_announce)
-
     conv_set_delay = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Set Delay$"), set_delay_start)],
         states={
@@ -549,7 +629,6 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_set_delay)
-
     updater.start_polling()
     logger.info("Bot is running... 🚀")
     updater.idle()
