@@ -27,29 +27,21 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# -------------------- CONFIGURATION --------------------
 TOKEN = os.getenv("TOKEN")
 API_KEY = os.getenv("API_KEY")
-DEFAULT_UPDATE_INTERVAL = 300  # Default auto update interval (5 minutes)
+DEFAULT_UPDATE_INTERVAL = 300
 CORTENSOR_API = os.getenv("CORTENSOR_API", "https://dashboard-devnet3.cortensor.network")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
-MIN_AUTO_UPDATE_INTERVAL = 60  # Minimum auto update interval (in seconds)
+MIN_AUTO_UPDATE_INTERVAL = 60
 
-# -------------------- INITIALIZATION --------------------
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
-WIB = timezone(timedelta(hours=7))  # WIB (UTC+7)
+WIB = timezone(timedelta(hours=7))
 
-# -------------------- CONVERSATION STATES --------------------
 ADD_ADDRESS, REMOVE_ADDRESS, ANNOUNCE, SET_DELAY = range(1, 5)
+custom_delays = {}
 
-# -------------------- GLOBAL VARIABLES --------------------
-custom_delays = {}  # Custom API delay per chat
-
-# -------------------- DATA STORAGE FUNCTIONS --------------------
 def load_data() -> dict:
     if os.path.exists(DATA_FILE):
         try:
@@ -91,13 +83,11 @@ def update_auto_update_interval(chat_id: int, interval: float):
     chat_data["auto_update_interval"] = interval
     update_chat_data(chat_id, chat_data)
 
-# -------------------- HELPER FUNCTION --------------------
 def parse_address_item(item):
     if isinstance(item, dict):
         return item.get("address"), item.get("label", "")
     return item, ""
 
-# -------------------- UTILITY FUNCTIONS --------------------
 def shorten_address(address: str) -> str:
     return address[:6] + "..." + address[-4:] if len(address) > 10 else address
 
@@ -115,7 +105,6 @@ def get_age(timestamp: int) -> str:
     minutes = seconds // 60
     return f"{minutes} mins ago" if minutes < 60 else f"{minutes//60} hours ago"
 
-# -------------------- MENU KEYBOARD --------------------
 def main_menu_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     keyboard = [
         ["Add Address", "Remove Address"],
@@ -127,7 +116,6 @@ def main_menu_keyboard(user_id: int) -> ReplyKeyboardMarkup:
         keyboard.append(["Announce"])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
-# -------------------- DYNAMIC RATE LIMIT HELPER --------------------
 def get_dynamic_delay(num_addresses: int) -> float:
     base_delay = 2.0
     total_calls = 2 * num_addresses
@@ -138,7 +126,6 @@ def get_dynamic_delay(num_addresses: int) -> float:
     dynamic_delay = required_total_time / intervals
     return max(dynamic_delay, base_delay)
 
-# -------------------- API FUNCTIONS --------------------
 def safe_fetch_balance(address: str, delay: float) -> float:
     max_retries = 3
     for attempt in range(max_retries):
@@ -195,7 +182,6 @@ def fetch_node_stats(address: str) -> dict:
         logger.error(f"Node stats error for {address}: {e}")
         return {}
 
-# -------------------- JOB FUNCTIONS --------------------
 def auto_update(context: CallbackContext):
     chat_id = context.job.context['chat_id']
     addresses = get_addresses_for_chat(chat_id)[:25]
@@ -281,7 +267,6 @@ def alert_check(context: CallbackContext):
                 parse_mode="Markdown"
             )
 
-# -------------------- CONVERSATION HANDLER FUNCTIONS --------------------
 def cancel(update, context):
     update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id))
     return ConversationHandler.END
@@ -294,7 +279,7 @@ def add_address_start(update, context):
     return ADD_ADDRESS
 
 def add_address_receive(update, context):
-    chat_id = update.effective_chat.id
+    chat_id = update.effective_user.id
     text = update.effective_message.text.strip()
     parts = [x.strip() for x in text.split(",")]
     wallet = parts[0].lower()
@@ -315,7 +300,7 @@ def add_address_receive(update, context):
     return ConversationHandler.END
 
 def remove_address_start(update, context):
-    chat_id = update.effective_chat.id
+    chat_id = update.effective_user.id
     addresses = get_addresses_for_chat(chat_id)
     if not addresses:
         update.effective_message.reply_text("No addresses found to remove.", reply_markup=main_menu_keyboard(update.effective_user.id))
@@ -330,7 +315,7 @@ def remove_address_start(update, context):
     return REMOVE_ADDRESS
 
 def remove_address_receive(update, context):
-    chat_id = update.effective_chat.id
+    chat_id = update.effective_user.id
     choice = update.effective_message.text.strip()
     if choice.lower() == "cancel":
         update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id))
@@ -357,7 +342,7 @@ def set_delay_start(update, context):
     return SET_DELAY
 
 def set_delay_receive(update, context):
-    chat_id = update.effective_chat.id
+    chat_id = update.effective_user.id
     text = update.effective_message.text.strip()
     try:
         custom_delay = float(text)
@@ -507,23 +492,6 @@ def menu_stop(update, context):
     else:
         update.effective_message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
-def start_command(update, context):
-    chat_id = update.effective_user.id
-    update.effective_message.reply_text(
-        "👋 Welcome to the Cortensor Node Monitoring Bot!\nSelect an option from the menu below:",
-        reply_markup=main_menu_keyboard(chat_id)
-    )
-
-def error_handler(update, context):
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
-    error_text = f"⚠️ An error occurred: {context.error}"
-    for admin_id in ADMIN_IDS:
-        try:
-            context.bot.send_message(chat_id=admin_id, text=error_text)
-        except Exception as e:
-            logger.error(f"Error sending error message to admin: {e}")
-            time.sleep(1)
-
 def announce_start(update, context):
     user_id = update.effective_user.id
     if user_id not in ADMIN_IDS:
@@ -548,9 +516,27 @@ def announce_receive(update, context):
     update.effective_message.reply_text(f"📣 Announcement sent to {count} chats.", reply_markup=main_menu_keyboard(update.effective_user.id))
     return ConversationHandler.END
 
+def start_command(update, context):
+    chat_id = update.effective_user.id
+    update.effective_message.reply_text(
+        "👋 Welcome to the Cortensor Node Monitoring Bot!\nSelect an option from the menu below:",
+        reply_markup=main_menu_keyboard(chat_id)
+    )
+
+def error_handler(update, context):
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+    error_text = f"⚠️ An error occurred: {context.error}"
+    for admin_id in ADMIN_IDS:
+        try:
+            context.bot.send_message(chat_id=admin_id, text=error_text)
+        except Exception as e:
+            logger.error(f"Error sending error message to admin: {e}")
+            time.sleep(1)
+
 def main():
     updater = Updater(TOKEN)
     dp = updater.dispatcher
+
     logger.info("Bot is starting...")
     dp.add_handler(CommandHandler("start", start_command))
     dp.add_handler(CommandHandler("auto_update", menu_auto_update))
@@ -565,6 +551,7 @@ def main():
     dp.add_handler(CommandHandler("set_delay", set_delay_start))
     dp.add_handler(MessageHandler(Filters.regex("^Set Delay$"), set_delay_start))
     dp.add_error_handler(error_handler)
+
     conv_add = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Add Address$"), add_address_start)],
         states={
@@ -573,6 +560,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_add)
+
     conv_remove = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Remove Address$"), remove_address_start)],
         states={
@@ -581,6 +569,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_remove)
+
     conv_announce = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Announce$"), announce_start)],
         states={
@@ -589,6 +578,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_announce)
+
     conv_set_delay = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Set Delay$"), set_delay_start)],
         states={
@@ -597,6 +587,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_set_delay)
+
     updater.start_polling()
     logger.info("Bot is running... 🚀")
     updater.idle()
