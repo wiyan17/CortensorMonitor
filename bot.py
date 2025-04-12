@@ -11,7 +11,6 @@ Features:
 • Set Delay (custom auto update interval per chat)
 • Stop
 • Announce (admin only)
-• Help
 
 Maximum nodes per chat: 25
 """
@@ -32,7 +31,7 @@ load_dotenv()
 TOKEN = os.getenv("TOKEN")
 API_KEY = os.getenv("API_KEY")
 DEFAULT_UPDATE_INTERVAL = 300  # Default auto update interval (5 minutes)
-# Base URL for dashboard links (new endpoint)
+# Base URL for dashboard links
 CORTENSOR_API = os.getenv("CORTENSOR_API", "https://dashboard-devnet3.cortensor.network")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
@@ -124,11 +123,12 @@ def get_age(timestamp: int) -> str:
 
 # -------------------- MENU KEYBOARD --------------------
 def main_menu_keyboard(user_id: int) -> ReplyKeyboardMarkup:
+    # Removed the "Help" button.
     keyboard = [
         ["Add Address", "Remove Address"],
         ["Check Status", "Auto Update"],
         ["Enable Alerts", "Set Delay"],
-        ["Stop", "Help"]
+        ["Stop"]
     ]
     if user_id in ADMIN_IDS:
         keyboard.append(["Announce"])
@@ -276,6 +276,10 @@ def alert_check(context: CallbackContext):
             )
 
 # -------------------- CONVERSATION HANDLER FUNCTIONS --------------------
+def cancel(update, context):
+    update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    return ConversationHandler.END
+
 def add_address_start(update, context):
     update.effective_message.reply_text(
         "Please send the wallet address to add in the format `<wallet_address>,<label>` (label is optional).\nExample: 0xABC123...7890,My Node\n(Send /cancel to abort)",
@@ -385,7 +389,7 @@ def announce_receive(update, context):
     update.effective_message.reply_text(f"📣 Announcement sent to {count} chats.", reply_markup=main_menu_keyboard(update.effective_user.id))
     return ConversationHandler.END
 
-# -------------------- MENU COMMAND FUNCTIONS --------------------
+# -------------------- MAIN COMMAND FUNCTIONS --------------------
 def menu_check_status(update, context):
     chat_id = update.effective_chat.id
     addresses = get_addresses_for_chat(chat_id)
@@ -482,37 +486,6 @@ def start_command(update, context):
         reply_markup=main_menu_keyboard(chat_id)
     )
 
-def help_command(update, context):
-    help_text = (
-        "📖 *Cortensor Node Monitoring Bot - Full Command Guide*\n\n"
-        "• *Add Address*\n"
-        "  - *Usage*: `<wallet_address>,<label>` (label is optional)\n"
-        "  - *Description*: Adds a wallet address to monitor (max 25 per chat).\n\n"
-        "• *Remove Address*\n"
-        "  - *Usage*: Select the address to remove (format: `wallet (label)`).\n"
-        "  - *Description*: Removes a wallet address from your list.\n\n"
-        "• *Check Status*\n"
-        "  - *Usage*: Simply send the command.\n"
-        "  - *Description*: Displays each node’s balance, status, last activity, health, and stall info (with stall duration if applicable).\n\n"
-        "• *Auto Update*\n"
-        "  - *Usage*: Activates automatic node updates based on your set interval.\n"
-        "  - *Description*: The bot sends updates every auto update interval (default 300 seconds or your custom value).\n\n"
-        "• *Enable Alerts*\n"
-        "  - *Usage*: Activates continuous monitoring for node issues.\n"
-        "  - *Description*: Alerts you if no transactions occur for 15 minutes or if a node stall is detected (last 25 transactions are all PING).\n\n"
-        "• *Set Delay*\n"
-        "  - *Usage*: Enter your desired custom delay (in seconds) for API calls (minimum 0.5 sec).\n"
-        "  - *Description*: Overrides the dynamic delay for API calls.\n\n"
-        "• *Stop*\n"
-        "  - *Usage*: Simply send the command.\n"
-        "  - *Description*: Stops all auto update and alert jobs.\n\n"
-        "• *Announce* (Admin only)\n"
-        "  - *Usage*: Admin sends this command followed by the announcement message.\n"
-        "  - *Description*: Broadcasts an announcement to all registered chats.\n\n"
-        "🚀 *Happy Monitoring!*"
-    )
-    update.effective_message.reply_text(help_text, parse_mode="Markdown", disable_web_page_preview=True)
-
 # -------------------- ERROR HANDLER --------------------
 def error_handler(update, context):
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
@@ -528,7 +501,6 @@ def main():
     logger.info("Bot is starting...")
 
     dp.add_handler(CommandHandler("start", start_command))
-    dp.add_handler(CommandHandler("help", help_command))
     dp.add_handler(CommandHandler("auto_update", menu_auto_update))
     dp.add_handler(MessageHandler(Filters.regex("^Auto Update$"), menu_auto_update))
     dp.add_handler(CommandHandler("enable_alerts", menu_enable_alerts))
@@ -547,7 +519,7 @@ def main():
         states={
             ADD_ADDRESS: [MessageHandler(Filters.text & ~Filters.command, add_address_receive)]
         },
-        fallbacks=[CommandHandler("cancel", lambda update, context: update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id)))]
+        fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_add)
 
@@ -556,7 +528,7 @@ def main():
         states={
             REMOVE_ADDRESS: [MessageHandler(Filters.text & ~Filters.command, remove_address_receive)]
         },
-        fallbacks=[CommandHandler("cancel", lambda update, context: update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id)))]
+        fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_remove)
 
@@ -565,7 +537,7 @@ def main():
         states={
             ANNOUNCE: [MessageHandler(Filters.text & ~Filters.command, announce_receive)]
         },
-        fallbacks=[CommandHandler("cancel", lambda update, context: update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id)))]
+        fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_announce)
 
@@ -574,7 +546,7 @@ def main():
         states={
             SET_DELAY: [MessageHandler(Filters.text & ~Filters.command, set_delay_receive)]
         },
-        fallbacks=[CommandHandler("cancel", lambda update, context: update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id)))]
+        fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_set_delay)
 
