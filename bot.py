@@ -29,11 +29,11 @@ load_dotenv()
 
 TOKEN = os.getenv("TOKEN")
 API_KEY = os.getenv("API_KEY")
-DEFAULT_UPDATE_INTERVAL = 300
+DEFAULT_UPDATE_INTERVAL = 300  # Default auto update interval (5 minutes)
 CORTENSOR_API = os.getenv("CORTENSOR_API", "https://dashboard-devnet3.cortensor.network")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
-MIN_AUTO_UPDATE_INTERVAL = 60
+MIN_AUTO_UPDATE_INTERVAL = 60  # Minimum auto update interval in seconds
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -203,6 +203,7 @@ def auto_update(context: CallbackContext):
             groups = [latest_25[i*5:(i+1)*5] for i in range(5)]
             health_list = [("🟩" if all(tx.get('isError') == '0' for tx in group) else "🟥") if group else "⬜" for group in groups]
             health_status = " ".join(health_list)
+            # If all of the last 25 transactions are PING, find the last non-PING transaction.
             if len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25):
                 stall_status = "🚨 Node Stall"
                 non_ping_timestamp = None
@@ -211,8 +212,9 @@ def auto_update(context: CallbackContext):
                         non_ping_timestamp = int(tx['timeStamp'])
                         break
                 if non_ping_timestamp is None:
-                    non_ping_timestamp = last_tx_time
-                stall_extra = f" (stale for {get_age(non_ping_timestamp)})"
+                    stall_extra = " (stale duration N/A)"
+                else:
+                    stall_extra = f" (stale for {get_age(non_ping_timestamp)})"
             else:
                 stall_status = "✅ Normal"
                 stall_extra = ""
@@ -255,9 +257,10 @@ def alert_check(context: CallbackContext):
                             non_ping_timestamp = int(tx['timeStamp'])
                             break
                     if non_ping_timestamp is None:
-                        non_ping_timestamp = last_tx_time
-                    stall_duration = get_age(non_ping_timestamp)
-                    msg_lines.append(f"⚠️ Node stall detected (only PING transactions in the last 25, stale for {stall_duration}).")
+                        msg_lines.append("⚠️ Node stall detected (no non-PING transactions found).")
+                    else:
+                        stall_duration = get_age(non_ping_timestamp)
+                        msg_lines.append(f"⚠️ Node stall detected (only PING transactions in the last 25, stale for {stall_duration}).")
                 msg_lines.append(f"[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{wallet}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{wallet})")
                 context.bot.send_message(chat_id=chat_id, text="\n".join(msg_lines), parse_mode="Markdown")
         else:
@@ -397,6 +400,34 @@ def error_handler(update, context):
             logger.error(f"Error sending error message to admin: {e}")
             time.sleep(1)
 
+def menu_enable_alerts(update, context):
+    chat_id = update.effective_user.id
+    if not get_addresses_for_chat(chat_id):
+        update.effective_message.reply_text("No addresses registered! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    current_jobs = context.job_queue.get_jobs_by_name(f"alert_{chat_id}")
+    if current_jobs:
+        update.effective_message.reply_text("Alerts are already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    context.job_queue.run_repeating(alert_check, interval=900, context={'chat_id': chat_id}, name=f"alert_{chat_id}")
+    update.effective_message.reply_text(
+        "✅ Alerts enabled.\nThe bot will monitor your nodes and send alerts if no transactions occur for 15 minutes or if a node stall is detected.",
+        reply_markup=main_menu_keyboard(update.effective_user.id)
+    )
+
+def menu_stop(update, context):
+    chat_id = update.effective_user.id
+    removed_jobs = 0
+    for job_name in (f"auto_update_{chat_id}", f"alert_{chat_id}"):
+        jobs = context.job_queue.get_jobs_by_name(job_name)
+        for job in jobs:
+            job.schedule_removal()
+            removed_jobs += 1
+    if removed_jobs:
+        update.effective_message.reply_text("✅ All jobs have been stopped.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    else:
+        update.effective_message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
+
 def menu_auto_update(update, context):
     chat_id = update.effective_user.id
     if not get_addresses_for_chat(chat_id):
@@ -442,8 +473,9 @@ def menu_check_status(update, context):
                         non_ping_timestamp = int(tx['timeStamp'])
                         break
                 if non_ping_timestamp is None:
-                    non_ping_timestamp = last_tx_time
-                stall_extra = f" (stale for {get_age(non_ping_timestamp)})"
+                    stall_extra = " (stale N/A)"
+                else:
+                    stall_extra = f" (stale for {get_age(non_ping_timestamp)})"
             else:
                 stall_status = "✅ Normal"
                 stall_extra = ""
