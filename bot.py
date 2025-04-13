@@ -454,6 +454,19 @@ def menu_enable_alerts(update, context):
         reply_markup=main_menu_keyboard(update.effective_user.id)
     )
 
+def menu_stop(update, context):
+    chat_id = update.effective_chat.id
+    removed_jobs = 0
+    for job_name in (f"auto_update_{chat_id}", f"alert_{chat_id}"):
+        jobs = context.job_queue.get_jobs_by_name(job_name)
+        for job in jobs:
+            job.schedule_removal()
+            removed_jobs += 1
+    if removed_jobs:
+        update.effective_message.reply_text("✅ All jobs (auto update and alerts) have been stopped.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    else:
+        update.effective_message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
+
 def error_handler(update, context):
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
     error_text = f"⚠️ An error occurred: {context.error}"
