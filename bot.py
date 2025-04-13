@@ -33,7 +33,7 @@ DEFAULT_UPDATE_INTERVAL = 300  # Default auto update interval (5 minutes)
 CORTENSOR_API = os.getenv("CORTENSOR_API", "https://dashboard-devnet3.cortensor.network")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
-MIN_AUTO_UPDATE_INTERVAL = 60  # Minimum auto update interval in seconds
+MIN_AUTO_UPDATE_INTERVAL = 60  # Minimum auto update interval (in seconds)
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -182,6 +182,29 @@ def fetch_node_stats(address: str) -> dict:
         logger.error(f"Node stats error for {address}: {e}")
         return {}
 
+# New helper: Retrieve the last successful transaction among allowed methods.
+def get_last_allowed_transaction(txs: list):
+    allowed = {
+        "0xf21a494b": "Commit",
+        "0x65c815a5": "Precommit",
+        "0xca6726d9": "Prepare"
+    }
+    for tx in txs:
+        method = tx.get('input','').lower()
+        if method.startswith("0x5c36b186"):
+            continue
+        # Check transaction success.
+        if tx.get("isError") != "0":
+            continue
+        # Check if method matches one of the allowed keys.
+        for key, name in allowed.items():
+            if method.startswith(key):
+                return (name, int(tx['timeStamp']))
+        # Or if it's a "create" transaction.
+        if "create" in method:
+            return ("Create", int(tx['timeStamp']))
+    return None
+
 def auto_update(context: CallbackContext):
     chat_id = context.job.context['chat_id']
     addresses = get_addresses_for_chat(chat_id)[:25]
@@ -203,18 +226,14 @@ def auto_update(context: CallbackContext):
             groups = [latest_25[i*5:(i+1)*5] for i in range(5)]
             health_list = [("🟩" if all(tx.get('isError') == '0' for tx in group) else "🟥") if group else "⬜" for group in groups]
             health_status = " ".join(health_list)
-            # If all of the last 25 transactions are PING, find the last non-PING transaction.
             if len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25):
                 stall_status = "🚨 Node Stall"
-                non_ping_timestamp = None
-                for tx in txs:
-                    if not tx.get('input','').lower().startswith("0x5c36b186"):
-                        non_ping_timestamp = int(tx['timeStamp'])
-                        break
-                if non_ping_timestamp is None:
-                    stall_extra = " (stale duration N/A)"
+                last_allowed = get_last_allowed_transaction(txs)
+                if last_allowed:
+                    method_name, ts = last_allowed
+                    stall_extra = f" (last successful {method_name} transaction was {get_age(ts)})"
                 else:
-                    stall_extra = f" (stale for {get_age(non_ping_timestamp)})"
+                    stall_extra = " (stale duration N/A)"
             else:
                 stall_status = "✅ Normal"
                 stall_extra = ""
@@ -251,16 +270,12 @@ def alert_check(context: CallbackContext):
                 if time_diff > timedelta(minutes=15):
                     msg_lines.append("⏱️ No transactions in the last 15 minutes.")
                 if stall_condition:
-                    non_ping_timestamp = None
-                    for tx in txs:
-                        if not tx.get('input','').lower().startswith("0x5c36b186"):
-                            non_ping_timestamp = int(tx['timeStamp'])
-                            break
-                    if non_ping_timestamp is None:
-                        msg_lines.append("⚠️ Node stall detected (no non-PING transactions found).")
+                    last_allowed = get_last_allowed_transaction(txs)
+                    if last_allowed:
+                        method_name, ts = last_allowed
+                        msg_lines.append(f"⚠️ Node stall detected (last successful {method_name} transaction was {get_age(ts)}).")
                     else:
-                        stall_duration = get_age(non_ping_timestamp)
-                        msg_lines.append(f"⚠️ Node stall detected (only PING transactions in the last 25, stale for {stall_duration}).")
+                        msg_lines.append("⚠️ Node stall detected (stale duration N/A).")
                 msg_lines.append(f"[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{wallet}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{wallet})")
                 context.bot.send_message(chat_id=chat_id, text="\n".join(msg_lines), parse_mode="Markdown")
         else:
@@ -385,10 +400,7 @@ def announce_receive(update, context):
 
 def start_command(update, context):
     chat_id = update.effective_user.id
-    update.effective_message.reply_text(
-        "👋 Welcome to the Cortensor Node Monitoring Bot!\nSelect an option from the menu below:",
-        reply_markup=main_menu_keyboard(chat_id)
-    )
+    update.effective_message.reply_text("👋 Welcome to the Cortensor Node Monitoring Bot!\nSelect an option from the menu below:", reply_markup=main_menu_keyboard(chat_id))
 
 def error_handler(update, context):
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
@@ -410,10 +422,7 @@ def menu_enable_alerts(update, context):
         update.effective_message.reply_text("Alerts are already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
     context.job_queue.run_repeating(alert_check, interval=900, context={'chat_id': chat_id}, name=f"alert_{chat_id}")
-    update.effective_message.reply_text(
-        "✅ Alerts enabled.\nThe bot will monitor your nodes and send alerts if no transactions occur for 15 minutes or if a node stall is detected.",
-        reply_markup=main_menu_keyboard(update.effective_user.id)
-    )
+    update.effective_message.reply_text("✅ Alerts enabled.\nThe bot will monitor your nodes and send alerts if no transactions occur for 15 minutes or if a node stall is detected.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def menu_stop(update, context):
     chat_id = update.effective_user.id
@@ -439,10 +448,7 @@ def menu_auto_update(update, context):
         update.effective_message.reply_text("Auto update is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
     context.job_queue.run_repeating(auto_update, interval=interval, context={'chat_id': chat_id}, name=f"auto_update_{chat_id}")
-    update.effective_message.reply_text(
-        f"✅ Auto update started. (Interval: {interval} seconds)\nThe bot will send node updates automatically.",
-        reply_markup=main_menu_keyboard(update.effective_user.id)
-    )
+    update.effective_message.reply_text(f"✅ Auto update started. (Interval: {interval} seconds)\nThe bot will send node updates automatically.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def menu_check_status(update, context):
     chat_id = update.effective_user.id
@@ -467,15 +473,28 @@ def menu_check_status(update, context):
             health_status = " ".join(health_list)
             if len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25):
                 stall_status = "🚨 Node Stall"
-                non_ping_timestamp = None
+                allowed = {"0xf21a494b": "Commit", "0x65c815a5": "Precommit", "0xca6726d9": "Prepare"}
+                last_allowed = None
                 for tx in txs:
-                    if not tx.get('input','').lower().startswith("0x5c36b186"):
-                        non_ping_timestamp = int(tx['timeStamp'])
+                    method = tx.get('input','').lower()
+                    if method.startswith("0x5c36b186"):
+                        continue
+                    if tx.get("isError") != "0":
+                        continue
+                    for key, name in allowed.items():
+                        if method.startswith(key):
+                            last_allowed = (name, int(tx['timeStamp']))
+                            break
+                    if last_allowed:
                         break
-                if non_ping_timestamp is None:
-                    stall_extra = " (stale N/A)"
+                    if "create" in method:
+                        last_allowed = ("Create", int(tx['timeStamp']))
+                        break
+                if last_allowed:
+                    method_name, ts = last_allowed
+                    stall_extra = f" (last successful {method_name} transaction was {get_age(ts)})"
                 else:
-                    stall_extra = f" (stale for {get_age(non_ping_timestamp)})"
+                    stall_extra = " (stale duration N/A)"
             else:
                 stall_status = "✅ Normal"
                 stall_extra = ""
@@ -506,10 +525,7 @@ def menu_enable_alerts(update, context):
         update.effective_message.reply_text("Alerts are already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
         return
     context.job_queue.run_repeating(alert_check, interval=900, context={'chat_id': chat_id}, name=f"alert_{chat_id}")
-    update.effective_message.reply_text(
-        "✅ Alerts enabled.\nThe bot will monitor your nodes and send alerts if no transactions occur for 15 minutes or if a node stall is detected.",
-        reply_markup=main_menu_keyboard(update.effective_user.id)
-    )
+    update.effective_message.reply_text("✅ Alerts enabled.\nThe bot will monitor your nodes and send alerts if no transactions occur for 15 minutes or if a node stall is detected.", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 def menu_stop(update, context):
     chat_id = update.effective_user.id
@@ -550,10 +566,7 @@ def announce_receive(update, context):
 
 def start_command(update, context):
     chat_id = update.effective_user.id
-    update.effective_message.reply_text(
-        "👋 Welcome to the Cortensor Node Monitoring Bot!\nSelect an option from the menu below:",
-        reply_markup=main_menu_keyboard(chat_id)
-    )
+    update.effective_message.reply_text("👋 Welcome to the Cortensor Node Monitoring Bot!\nSelect an option from the menu below:", reply_markup=main_menu_keyboard(chat_id))
 
 def error_handler(update, context):
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
@@ -568,7 +581,6 @@ def error_handler(update, context):
 def main():
     updater = Updater(TOKEN)
     dp = updater.dispatcher
-
     logger.info("Bot is starting...")
     dp.add_handler(CommandHandler("start", start_command))
     dp.add_handler(CommandHandler("auto_update", menu_auto_update))
@@ -583,7 +595,6 @@ def main():
     dp.add_handler(CommandHandler("set_delay", set_delay_start))
     dp.add_handler(MessageHandler(Filters.regex("^Set Delay$"), set_delay_start))
     dp.add_error_handler(error_handler)
-
     conv_add = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Add Address$"), add_address_start)],
         states={
@@ -592,7 +603,6 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_add)
-
     conv_remove = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Remove Address$"), remove_address_start)],
         states={
@@ -601,7 +611,6 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_remove)
-
     conv_announce = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Announce$"), announce_start)],
         states={
@@ -610,7 +619,6 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_announce)
-
     conv_set_delay = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Set Delay$"), set_delay_start)],
         states={
@@ -619,7 +627,6 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_set_delay)
-
     updater.start_polling()
     logger.info("Bot is running... 🚀")
     updater.idle()
