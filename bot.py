@@ -33,7 +33,7 @@ DEFAULT_UPDATE_INTERVAL = 300  # Default auto update interval (5 minutes)
 CORTENSOR_API = os.getenv("CORTENSOR_API", "https://dashboard-devnet3.cortensor.network")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
-MIN_AUTO_UPDATE_INTERVAL = 60  # Minimum auto update interval (in seconds)
+MIN_AUTO_UPDATE_INTERVAL = 60  # Minimum auto update interval in seconds
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -182,7 +182,8 @@ def fetch_node_stats(address: str) -> dict:
         logger.error(f"Node stats error for {address}: {e}")
         return {}
 
-# New helper: Retrieve the last successful transaction among allowed methods.
+# New helper: scan through txs (not limited to last 25) and return the label and timestamp
+# for the most recent successful transaction matching one of the allowed methods.
 def get_last_allowed_transaction(txs: list):
     allowed = {
         "0xf21a494b": "Commit",
@@ -190,21 +191,20 @@ def get_last_allowed_transaction(txs: list):
         "0xca6726d9": "Prepare"
     }
     for tx in txs:
-        method = tx.get('input','').lower()
+        method = tx.get('input', '').lower()
+        # Skip if this is a Ping transaction
         if method.startswith("0x5c36b186"):
             continue
-        # Check transaction success.
         if tx.get("isError") != "0":
             continue
-        # Check if method matches one of the allowed keys.
-        for key, name in allowed.items():
+        for key, label in allowed.items():
             if method.startswith(key):
-                return (name, int(tx['timeStamp']))
-        # Or if it's a "create" transaction.
+                return (label, int(tx['timeStamp']))
         if "create" in method:
             return ("Create", int(tx['timeStamp']))
     return None
 
+# Auto Update job sends combined update messages.
 def auto_update(context: CallbackContext):
     chat_id = context.job.context['chat_id']
     addresses = get_addresses_for_chat(chat_id)[:25]
@@ -222,21 +222,20 @@ def auto_update(context: CallbackContext):
             time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
             status = "🟢 Online" if time_diff <= timedelta(minutes=5) else "🔴 Offline"
             last_activity = get_age(last_tx_time)
+            # Use allowed tx check for stall duration irrespective of 25-last tx group.
+            last_allowed = get_last_allowed_transaction(txs)
+            if last_allowed:
+                method_label, ts = last_allowed
+                stall_status = "🚨 Node Stall"
+                stall_extra = f" (last successful {method_label} transaction was {get_age(ts)})"
+            else:
+                stall_status = "✅ Normal"
+                stall_extra = ""
+            # Use similar grouping for health (if desired)
             latest_25 = txs[:25]
             groups = [latest_25[i*5:(i+1)*5] for i in range(5)]
             health_list = [("🟩" if all(tx.get('isError') == '0' for tx in group) else "🟥") if group else "⬜" for group in groups]
             health_status = " ".join(health_list)
-            if len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25):
-                stall_status = "🚨 Node Stall"
-                last_allowed = get_last_allowed_transaction(txs)
-                if last_allowed:
-                    method_name, ts = last_allowed
-                    stall_extra = f" (last successful {method_name} transaction was {get_age(ts)})"
-                else:
-                    stall_extra = " (stale duration N/A)"
-            else:
-                stall_status = "✅ Normal"
-                stall_extra = ""
         else:
             status = "🔴 Offline"
             last_activity = "N/A"
@@ -254,6 +253,7 @@ def auto_update(context: CallbackContext):
     final_output = "*Auto Update*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
     context.bot.send_message(chat_id=chat_id, text=final_output, parse_mode="Markdown")
 
+# Alert Check job sends an alert if no transactions occur for 15 minutes or stall condition exists.
 def alert_check(context: CallbackContext):
     chat_id = context.job.context['chat_id']
     addresses = get_addresses_for_chat(chat_id)[:25]
@@ -263,27 +263,53 @@ def alert_check(context: CallbackContext):
         if txs:
             last_tx_time = int(txs[0]['timeStamp'])
             time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
-            latest_25 = txs[:25]
-            stall_condition = len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25)
-            if time_diff > timedelta(minutes=15) or stall_condition:
+            if time_diff > timedelta(minutes=15):
                 msg_lines = [f"🚨 *Alert for {shorten_address(wallet)}" + (f" ({label})" if label else "") + "*:"]
-                if time_diff > timedelta(minutes=15):
-                    msg_lines.append("⏱️ No transactions in the last 15 minutes.")
-                if stall_condition:
-                    last_allowed = get_last_allowed_transaction(txs)
-                    if last_allowed:
-                        method_name, ts = last_allowed
-                        msg_lines.append(f"⚠️ Node stall detected (last successful {method_name} transaction was {get_age(ts)}).")
-                    else:
-                        msg_lines.append("⚠️ Node stall detected (stale duration N/A).")
-                msg_lines.append(f"[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{wallet}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{wallet})")
+                msg_lines.append("⏱️ No transactions in the last 15 minutes.")
                 context.bot.send_message(chat_id=chat_id, text="\n".join(msg_lines), parse_mode="Markdown")
+                continue
+            # Check stall condition regardless of 25-last tx grouping:
+            last_allowed = get_last_allowed_transaction(txs)
+            if last_allowed is None:
+                msg_lines = [f"🚨 *Alert for {shorten_address(wallet)}" + (f" ({label})" if label else "") + "*:"]
+                msg_lines.append("⚠️ Node stall detected (no successful allowed transactions found).")
+                context.bot.send_message(chat_id=chat_id, text="\n".join(msg_lines), parse_mode="Markdown")
+            else:
+                method_label, ts = last_allowed
+                # Define a stall condition – here you may choose to alert only if the last allowed tx is older than 15 minutes.
+                if datetime.now(WIB) - datetime.fromtimestamp(ts, WIB) > timedelta(minutes=15):
+                    msg_lines = [f"🚨 *Alert for {shorten_address(wallet)}" + (f" ({label})" if label else "") + "*:"]
+                    msg_lines.append(f"⚠️ Node stall detected (last successful {method_label} transaction was {get_age(ts)}).")
+                    context.bot.send_message(chat_id=chat_id, text="\n".join(msg_lines), parse_mode="Markdown")
         else:
             context.bot.send_message(
                 chat_id=chat_id,
                 text=f"🚨 *Alert for {shorten_address(wallet)}" + (f" ({label})" if label else "") + "*:\n- No transactions found!\n[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{wallet}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{wallet})",
                 parse_mode="Markdown"
             )
+
+# Set Delay command to adjust the auto update interval.
+def set_delay_start(update, context):
+    update.effective_message.reply_text(
+        "Please enter the custom auto update interval (in seconds). (Minimum is 60 seconds)\n(Send /cancel to abort)",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    return SET_DELAY
+
+def set_delay_receive(update, context):
+    chat_id = update.effective_user.id
+    text = update.effective_message.text.strip()
+    try:
+        new_interval = float(text)
+        if new_interval < MIN_AUTO_UPDATE_INTERVAL:
+            update.effective_message.reply_text("The auto update interval must be at least 60 seconds. Try again or send /cancel.")
+            return SET_DELAY
+        update_auto_update_interval(chat_id, new_interval)
+        update.effective_message.reply_text(f"✅ Auto update interval set to {new_interval} seconds.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    except ValueError:
+        update.effective_message.reply_text("❌ Please enter a valid number for the auto update interval.")
+        return SET_DELAY
 
 def cancel(update, context):
     update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id))
@@ -355,191 +381,6 @@ def remove_address_receive(update, context):
     update.effective_message.reply_text("✅ Address removed.", reply_markup=main_menu_keyboard(update.effective_user.id))
     return ConversationHandler.END
 
-def set_delay_start(update, context):
-    update.effective_message.reply_text("Please enter the custom delay (in seconds) for API calls (minimum 0.5):", reply_markup=ReplyKeyboardRemove())
-    return SET_DELAY
-
-def set_delay_receive(update, context):
-    chat_id = update.effective_user.id
-    text = update.effective_message.text.strip()
-    try:
-        custom_delay = float(text)
-        if custom_delay < 0.5:
-            update.effective_message.reply_text("Delay must be at least 0.5 seconds. Try again or send /cancel.")
-            return SET_DELAY
-        custom_delays[chat_id] = custom_delay
-        update.effective_message.reply_text(f"✅ Custom delay set to {custom_delay} seconds.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return ConversationHandler.END
-    except ValueError:
-        update.effective_message.reply_text("❌ Please enter a valid number for the delay.")
-        return SET_DELAY
-
-def announce_start(update, context):
-    user_id = update.effective_user.id
-    if user_id not in ADMIN_IDS:
-        update.effective_message.reply_text("❌ You are not authorized to use this command.", reply_markup=main_menu_keyboard(user_id))
-        return ConversationHandler.END
-    update.effective_message.reply_text("Please send the announcement message:", reply_markup=ReplyKeyboardRemove())
-    return ANNOUNCE
-
-def announce_receive(update, context):
-    message = update.effective_message.text
-    data = load_data()
-    if not data:
-        update.effective_message.reply_text("No chats found to send the announcement.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return ConversationHandler.END
-    count = 0
-    for chat in data.keys():
-        try:
-            context.bot.send_message(chat_id=int(chat), text=message)
-            count += 1
-        except Exception as e:
-            logger.error(f"Error sending announcement to chat {chat}: {e}")
-    update.effective_message.reply_text(f"📣 Announcement sent to {count} chats.", reply_markup=main_menu_keyboard(update.effective_user.id))
-    return ConversationHandler.END
-
-def start_command(update, context):
-    chat_id = update.effective_user.id
-    update.effective_message.reply_text("👋 Welcome to the Cortensor Node Monitoring Bot!\nSelect an option from the menu below:", reply_markup=main_menu_keyboard(chat_id))
-
-def error_handler(update, context):
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
-    error_text = f"⚠️ An error occurred: {context.error}"
-    for admin_id in ADMIN_IDS:
-        try:
-            context.bot.send_message(chat_id=admin_id, text=error_text)
-        except Exception as e:
-            logger.error(f"Error sending error message to admin: {e}")
-            time.sleep(1)
-
-def menu_enable_alerts(update, context):
-    chat_id = update.effective_user.id
-    if not get_addresses_for_chat(chat_id):
-        update.effective_message.reply_text("No addresses registered! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    current_jobs = context.job_queue.get_jobs_by_name(f"alert_{chat_id}")
-    if current_jobs:
-        update.effective_message.reply_text("Alerts are already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    context.job_queue.run_repeating(alert_check, interval=900, context={'chat_id': chat_id}, name=f"alert_{chat_id}")
-    update.effective_message.reply_text("✅ Alerts enabled.\nThe bot will monitor your nodes and send alerts if no transactions occur for 15 minutes or if a node stall is detected.", reply_markup=main_menu_keyboard(update.effective_user.id))
-
-def menu_stop(update, context):
-    chat_id = update.effective_user.id
-    removed_jobs = 0
-    for job_name in (f"auto_update_{chat_id}", f"alert_{chat_id}"):
-        jobs = context.job_queue.get_jobs_by_name(job_name)
-        for job in jobs:
-            job.schedule_removal()
-            removed_jobs += 1
-    if removed_jobs:
-        update.effective_message.reply_text("✅ All jobs have been stopped.", reply_markup=main_menu_keyboard(update.effective_user.id))
-    else:
-        update.effective_message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
-
-def menu_auto_update(update, context):
-    chat_id = update.effective_user.id
-    if not get_addresses_for_chat(chat_id):
-        update.effective_message.reply_text("No addresses registered! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    interval = get_auto_update_interval(chat_id)
-    current_jobs = context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}")
-    if current_jobs:
-        update.effective_message.reply_text("Auto update is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    context.job_queue.run_repeating(auto_update, interval=interval, context={'chat_id': chat_id}, name=f"auto_update_{chat_id}")
-    update.effective_message.reply_text(f"✅ Auto update started. (Interval: {interval} seconds)\nThe bot will send node updates automatically.", reply_markup=main_menu_keyboard(update.effective_user.id))
-
-def menu_check_status(update, context):
-    chat_id = update.effective_user.id
-    addresses = get_addresses_for_chat(chat_id)
-    if not addresses:
-        update.effective_message.reply_text("No addresses registered! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    output_lines = []
-    for item in addresses[:25]:
-        wallet, label = parse_address_item(item)
-        addr_display = f"🔑 {shorten_address(wallet)}" + (f" ({label})" if label else "")
-        balance = safe_fetch_balance(wallet, delay=2.0)
-        txs = safe_fetch_transactions(wallet, delay=2.0)
-        if txs:
-            last_tx_time = int(txs[0]['timeStamp'])
-            time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
-            status = "🟢 Online" if time_diff <= timedelta(minutes=5) else "🔴 Offline"
-            last_activity = get_age(last_tx_time)
-            latest_25 = txs[:25]
-            groups = [latest_25[i*5:(i+1)*5] for i in range(5)]
-            health_list = [("🟩" if all(tx.get('isError') == '0' for tx in group) else "🟥") if group else "⬜" for group in groups]
-            health_status = " ".join(health_list)
-            if len(latest_25) >= 25 and all(tx.get('input','').lower().startswith("0x5c36b186") for tx in latest_25):
-                stall_status = "🚨 Node Stall"
-                allowed = {"0xf21a494b": "Commit", "0x65c815a5": "Precommit", "0xca6726d9": "Prepare"}
-                last_allowed = None
-                for tx in txs:
-                    method = tx.get('input','').lower()
-                    if method.startswith("0x5c36b186"):
-                        continue
-                    if tx.get("isError") != "0":
-                        continue
-                    for key, name in allowed.items():
-                        if method.startswith(key):
-                            last_allowed = (name, int(tx['timeStamp']))
-                            break
-                    if last_allowed:
-                        break
-                    if "create" in method:
-                        last_allowed = ("Create", int(tx['timeStamp']))
-                        break
-                if last_allowed:
-                    method_name, ts = last_allowed
-                    stall_extra = f" (last successful {method_name} transaction was {get_age(ts)})"
-                else:
-                    stall_extra = " (stale duration N/A)"
-            else:
-                stall_status = "✅ Normal"
-                stall_extra = ""
-        else:
-            status = "🔴 Offline"
-            last_activity = "N/A"
-            health_status = "No transactions"
-            stall_status = "N/A"
-            stall_extra = ""
-        output_lines.append(
-            f"*{addr_display}*\n"
-            f"💰 Balance: `{balance:.4f} ETH` | Status: {status}\n"
-            f"⏱️ Last Activity: `{last_activity}`\n"
-            f"🩺 Health: {health_status}\n"
-            f"⚠️ Stall: {stall_status}{stall_extra}\n"
-            f"[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{wallet}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{wallet})"
-        )
-    final_output = "*Check Status*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
-    update.effective_message.reply_text(final_output, parse_mode="Markdown", reply_markup=main_menu_keyboard(update.effective_user.id))
-
-def menu_enable_alerts(update, context):
-    chat_id = update.effective_user.id
-    if not get_addresses_for_chat(chat_id):
-        update.effective_message.reply_text("No addresses registered! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    current_jobs = context.job_queue.get_jobs_by_name(f"alert_{chat_id}")
-    if current_jobs:
-        update.effective_message.reply_text("Alerts are already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
-        return
-    context.job_queue.run_repeating(alert_check, interval=900, context={'chat_id': chat_id}, name=f"alert_{chat_id}")
-    update.effective_message.reply_text("✅ Alerts enabled.\nThe bot will monitor your nodes and send alerts if no transactions occur for 15 minutes or if a node stall is detected.", reply_markup=main_menu_keyboard(update.effective_user.id))
-
-def menu_stop(update, context):
-    chat_id = update.effective_user.id
-    removed_jobs = 0
-    for job_name in (f"auto_update_{chat_id}", f"alert_{chat_id}"):
-        jobs = context.job_queue.get_jobs_by_name(job_name)
-        for job in jobs:
-            job.schedule_removal()
-            removed_jobs += 1
-    if removed_jobs:
-        update.effective_message.reply_text("✅ All jobs have been stopped.", reply_markup=main_menu_keyboard(update.effective_user.id))
-    else:
-        update.effective_message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
-
 def announce_start(update, context):
     user_id = update.effective_user.id
     if user_id not in ADMIN_IDS:
@@ -581,6 +422,7 @@ def error_handler(update, context):
 def main():
     updater = Updater(TOKEN)
     dp = updater.dispatcher
+
     logger.info("Bot is starting...")
     dp.add_handler(CommandHandler("start", start_command))
     dp.add_handler(CommandHandler("auto_update", menu_auto_update))
@@ -595,6 +437,7 @@ def main():
     dp.add_handler(CommandHandler("set_delay", set_delay_start))
     dp.add_handler(MessageHandler(Filters.regex("^Set Delay$"), set_delay_start))
     dp.add_error_handler(error_handler)
+
     conv_add = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Add Address$"), add_address_start)],
         states={
@@ -603,6 +446,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_add)
+
     conv_remove = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Remove Address$"), remove_address_start)],
         states={
@@ -611,6 +455,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_remove)
+
     conv_announce = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Announce$"), announce_start)],
         states={
@@ -619,6 +464,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_announce)
+
     conv_set_delay = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Set Delay$"), set_delay_start)],
         states={
@@ -627,6 +473,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     dp.add_handler(conv_set_delay)
+
     updater.start_polling()
     logger.info("Bot is running... 🚀")
     updater.idle()
