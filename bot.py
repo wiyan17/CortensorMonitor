@@ -22,7 +22,14 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler, CallbackContext
+from telegram.ext import (
+    Updater,
+    CommandHandler,
+    MessageHandler,
+    Filters,
+    ConversationHandler,
+    CallbackContext
+)
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -122,11 +129,15 @@ def main_menu_keyboard(user_id: int) -> ReplyKeyboardMarkup:
 
 # -------------------- API FUNCTIONS --------------------
 def get_dynamic_delay(num_addresses: int) -> float:
-    base_delay = 2.0  # fixed base delay for API requests
+    """
+    Calculate a dynamic delay per API call so that total calls stay below 0.5 API calls/sec.
+    The base delay is now set to 3.0 seconds to help avoid rate limit errors.
+    """
+    base_delay = 3.0  # Minimum delay for API calls (3 seconds)
     total_calls = 2 * num_addresses  # Two API calls per address
     if total_calls <= 0.5:
         return base_delay
-    required_total_time = total_calls / 0.5
+    required_total_time = total_calls / 0.5  # seconds
     intervals = total_calls - 1
     dynamic_delay = required_total_time / intervals
     return max(dynamic_delay, base_delay)
@@ -189,6 +200,14 @@ def fetch_node_stats(address: str) -> dict:
 
 # -------------------- STALL DURATION HELPER --------------------
 def get_last_allowed_transaction(txs: list):
+    """
+    Scan through transactions (ignoring PING transactions) and return a tuple of
+    (Label, Timestamp) for the most recent successful transaction whose method is one of:
+     - 0xf21a494b (Commit)
+     - 0x65c815a5 (Precommit)
+     - 0xca6726d9 (Prepare)
+     - Or contains "create" (Create)
+    """
     allowed = {
         "0xf21a494b": "Commit",
         "0x65c815a5": "Precommit",
@@ -196,7 +215,7 @@ def get_last_allowed_transaction(txs: list):
     }
     for tx in txs:
         method = tx.get('input', '').lower()
-        if method.startswith("0x5c36b186"):  # Skip PING transactions
+        if method.startswith("0x5c36b186"):
             continue
         if tx.get("isError") != "0":
             continue
@@ -442,7 +461,6 @@ def menu_check_status(update, context):
             time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
             status = "🟢 Online" if time_diff <= timedelta(minutes=5) else "🔴 Offline"
             last_activity = get_age(last_tx_time)
-            # Use allowed tx helper for stall info
             last_allowed = get_last_allowed_transaction(txs)
             if last_allowed:
                 method_label, ts = last_allowed
@@ -496,6 +514,93 @@ def menu_stop(update, context):
         update.effective_message.reply_text("✅ All jobs have been stopped.", reply_markup=main_menu_keyboard(update.effective_user.id))
     else:
         update.effective_message.reply_text("No active jobs found.", reply_markup=main_menu_keyboard(update.effective_user.id))
+
+# -------------------- COMMAND HANDLER CONVERSATIONS --------------------
+def set_delay_start(update, context):
+    update.effective_message.reply_text("Please enter the custom auto update interval (in seconds). (Minimum is 60 seconds)\n(Send /cancel to abort)", reply_markup=ReplyKeyboardRemove())
+    return SET_DELAY
+
+def set_delay_receive(update, context):
+    chat_id = update.effective_user.id
+    text = update.effective_message.text.strip()
+    try:
+        new_interval = float(text)
+        if new_interval < MIN_AUTO_UPDATE_INTERVAL:
+            update.effective_message.reply_text("The auto update interval must be at least 60 seconds. Try again or send /cancel.")
+            return SET_DELAY
+        update_auto_update_interval(chat_id, new_interval)
+        update.effective_message.reply_text(f"✅ Auto update interval set to {new_interval} seconds.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    except ValueError:
+        update.effective_message.reply_text("❌ Please enter a valid number for the auto update interval.")
+        return SET_DELAY
+
+def cancel(update, context):
+    update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    return ConversationHandler.END
+
+def add_address_start(update, context):
+    update.effective_message.reply_text("Please send the wallet address to add in the format `<wallet_address>,<label>` (label is optional).\nExample: 0xABC123...7890,My Node\n(Send /cancel to abort)", reply_markup=ReplyKeyboardRemove())
+    return ADD_ADDRESS
+
+def add_address_receive(update, context):
+    chat_id = update.effective_user.id
+    text = update.effective_message.text.strip()
+    parts = [x.strip() for x in text.split(",")]
+    wallet = parts[0].lower()
+    label = parts[1] if len(parts) > 1 else ""
+    if not wallet.startswith("0x") or len(wallet) != 42:
+        update.effective_message.reply_text("❌ Invalid wallet address! It must start with '0x' and be 42 characters long. Try again or send /cancel to abort.")
+        return ADD_ADDRESS
+    addresses = get_addresses_for_chat(chat_id)
+    if any((item.get("address") if isinstance(item, dict) else item) == wallet for item in addresses):
+        update.effective_message.reply_text("⚠️ Address already exists! Returning to main menu.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    if len(addresses) >= 25:
+        update.effective_message.reply_text("❌ Maximum of 25 nodes per chat reached! Returning to main menu.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    addresses.append({"address": wallet, "label": label})
+    update_addresses_for_chat(chat_id, addresses)
+    update.effective_message.reply_text(f"✅ Added: {shorten_address(wallet)}" + (f" ({label})" if label else ""), reply_markup=main_menu_keyboard(update.effective_user.id))
+    return ConversationHandler.END
+
+def remove_address_start(update, context):
+    chat_id = update.effective_user.id
+    addresses = get_addresses_for_chat(chat_id)
+    if not addresses:
+        update.effective_message.reply_text("No addresses found to remove.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    keyboard = []
+    for item in addresses:
+        wallet, label = parse_address_item(item)
+        display = f"{wallet}" + (f" ({label})" if label else "")
+        keyboard.append([display])
+    keyboard.append(["Cancel"])
+    update.effective_message.reply_text("Select the address to remove:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True))
+    return REMOVE_ADDRESS
+
+def remove_address_receive(update, context):
+    chat_id = update.effective_user.id
+    choice = update.effective_message.text.strip()
+    if choice.lower() == "cancel":
+        update.effective_message.reply_text("Operation cancelled.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    addresses = get_addresses_for_chat(chat_id)
+    new_addresses = []
+    found = False
+    for item in addresses:
+        wallet, label = parse_address_item(item)
+        display = f"{wallet}" + (f" ({label})" if label else "")
+        if display == choice:
+            found = True
+            continue
+        new_addresses.append(item)
+    if not found:
+        update.effective_message.reply_text("❌ Address not found.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    update_addresses_for_chat(chat_id, new_addresses)
+    update.effective_message.reply_text("✅ Address removed.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    return ConversationHandler.END
 
 def announce_start(update, context):
     user_id = update.effective_user.id
