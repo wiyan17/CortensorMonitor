@@ -5,8 +5,8 @@ Cortensor Node Monitoring Bot – Telegram Reply Keyboard Version
 Features:
 • Add Address (with optional label, format: <wallet_address>,<label>)
 • Remove Address
-• Check Status
-• Auto Update (default tiap 5 menit)
+• Check Status (immediate update)
+• Auto Update (automatic update setiap interval default 5 menit)
 • Set Delay (custom auto update interval per chat)
 • Stop
 • Announce (admin only)
@@ -29,7 +29,7 @@ load_dotenv()
 # -------------------- KONFIGURASI --------------------
 TOKEN = os.getenv("TOKEN")
 API_KEY = os.getenv("API_KEY")
-DEFAULT_UPDATE_INTERVAL = 300  # Default auto update interval = 300 detik (5 menit)
+DEFAULT_UPDATE_INTERVAL = 300  # Interval auto update default = 300 detik (5 menit)
 CORTENSOR_API = os.getenv("CORTENSOR_API", "https://dashboard-devnet3.cortensor.network")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
@@ -271,23 +271,29 @@ def auto_update_logic(chat_id: int, bot) -> None:
     final_output = "*Auto Update*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
     bot.send_message(chat_id=chat_id, text=final_output, parse_mode="Markdown")
 
-# Callback untuk job auto update (hanya menerima context)
+# Job callback untuk auto update (berjalan otomatis setiap interval)
 def auto_update_job(context: CallbackContext):
     chat_id = context.job.context['chat_id']
     auto_update_logic(chat_id, context.bot)
 
-# Wrapper untuk command auto update
+# Command handler untuk AUTO UPDATE
 def auto_update_command(update, context):
     chat_id = update.effective_chat.id
     interval = get_auto_update_interval(chat_id)
-    # Hapus job auto update yang sudah ada di chat ini
+    # Hapus job auto update yang sudah ada untuk chat ini
     for job in context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}"):
         job.schedule_removal()
+    # Jadwalkan pekerjaan auto update berulang (dimulai langsung, interval sesuai pengaturan)
     context.job_queue.run_repeating(auto_update_job, interval=interval, first=0, context={'chat_id': chat_id}, name=f"auto_update_{chat_id}")
     update.effective_message.reply_text(
         f"✅ Auto update started. (Interval: {interval} seconds)\nThe bot will send node updates automatically.",
         reply_markup=main_menu_keyboard(chat_id)
     )
+
+# Command handler untuk CHECK STATUS (langsung update saat command dipanggil)
+def check_status_command(update, context):
+    chat_id = update.effective_chat.id
+    auto_update_logic(chat_id, context.bot)
 
 # -------------------- HANDLER COMMAND --------------------
 def set_delay_start(update, context):
@@ -430,8 +436,9 @@ def main():
     dp.add_handler(CommandHandler("start", start_command))
     dp.add_handler(CommandHandler("auto_update", auto_update_command))
     dp.add_handler(MessageHandler(Filters.regex("^Auto Update$"), auto_update_command))
-    dp.add_handler(CommandHandler("check_status", auto_update_command))
-    dp.add_handler(MessageHandler(Filters.regex("^Check Status$"), auto_update_command))
+    # Check status langsung (tanpa menjadwalkan job)
+    dp.add_handler(CommandHandler("check_status", check_status_command))
+    dp.add_handler(MessageHandler(Filters.regex("^Check Status$"), check_status_command))
     dp.add_handler(CommandHandler("announce", announce_start))
     dp.add_handler(CommandHandler("set_delay", set_delay_start))
     dp.add_handler(MessageHandler(Filters.regex("^Set Delay$"), set_delay_start))
