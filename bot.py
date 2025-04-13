@@ -131,6 +131,22 @@ def get_dynamic_delay(num_addresses: int) -> float:
     dynamic_delay = required_total_time / intervals
     return max(dynamic_delay, base_delay)
 
+def menu_auto_update(update, context):
+    chat_id = update.effective_chat.id
+    if not get_addresses_for_chat(chat_id):
+        update.effective_message.reply_text("No addresses registered! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    interval = get_auto_update_interval(chat_id)
+    current_jobs = context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}")
+    if current_jobs:
+        update.effective_message.reply_text("Auto update is already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    context.job_queue.run_repeating(auto_update, interval=interval, context={'chat_id': chat_id}, name=f"auto_update_{chat_id}")
+    update.effective_message.reply_text(
+        f"✅ Auto update started. (Interval: {interval} seconds)\n\nThe bot will send node updates automatically.",
+        reply_markup=main_menu_keyboard(update.effective_user.id)
+    )
+
 def safe_fetch_balance(address: str, delay: float) -> float:
     max_retries = 3
     for attempt in range(max_retries):
