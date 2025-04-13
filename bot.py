@@ -216,12 +216,11 @@ def get_last_allowed_transaction(txs: list):
             return ("Create", int(tx['timeStamp']))
     return None
 
-# -------------------- JOB FUNCTIONS --------------------
-def auto_update(context: CallbackContext):
-    chat_id = context.job.context['chat_id']
+# -------------------- AUTO UPDATE LOGIC --------------------
+def auto_update_logic(chat_id: int, bot) -> None:
     addresses = get_addresses_for_chat(chat_id)[:25]
     if not addresses:
-        context.bot.send_message(chat_id=chat_id, text="ℹ️ No addresses found! Please add one using 'Add Address'.")
+        bot.send_message(chat_id=chat_id, text="ℹ️ No addresses found! Please add one using 'Add Address'.")
         return
     output_lines = []
     for item in addresses:
@@ -273,8 +272,19 @@ def auto_update(context: CallbackContext):
             f"[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{wallet}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{wallet})"
         )
     final_output = "*Auto Update*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
-    context.bot.send_message(chat_id=chat_id, text=final_output, parse_mode="Markdown")
+    bot.send_message(chat_id=chat_id, text=final_output, parse_mode="Markdown")
 
+# Callback for job scheduler – receives only context.
+def auto_update_job(context: CallbackContext):
+    chat_id = context.job.context['chat_id']
+    auto_update_logic(chat_id, context.bot)
+
+# Callback for command – receives update and context.
+def auto_update_command(update, context):
+    chat_id = update.effective_user.id
+    auto_update_logic(chat_id, context.bot)
+
+# -------------------- JOB FUNCTIONS --------------------
 def alert_check(context: CallbackContext):
     chat_id = context.job.context['chat_id']
     addresses = get_addresses_for_chat(chat_id)[:25]
@@ -439,14 +449,15 @@ def main():
 
     logger.info("Bot is starting...")
     dp.add_handler(CommandHandler("start", start_command))
-    dp.add_handler(CommandHandler("auto_update", auto_update))
-    dp.add_handler(MessageHandler(Filters.regex("^Auto Update$"), auto_update))
+    # Use auto_update_command for both command and message triggers
+    dp.add_handler(CommandHandler("auto_update", auto_update_command))
+    dp.add_handler(MessageHandler(Filters.regex("^Auto Update$"), auto_update_command))
     dp.add_handler(CommandHandler("enable_alerts", alert_check))
     dp.add_handler(MessageHandler(Filters.regex("^Enable Alerts$"), alert_check))
     dp.add_handler(CommandHandler("stop", lambda update, context: update.effective_message.reply_text("Bot stopped.", reply_markup=ReplyKeyboardRemove())))
     dp.add_handler(MessageHandler(Filters.regex("^Stop$"), lambda update, context: update.effective_message.reply_text("Bot stopped.", reply_markup=ReplyKeyboardRemove())))
-    dp.add_handler(CommandHandler("check_status", auto_update))
-    dp.add_handler(MessageHandler(Filters.regex("^Check Status$"), auto_update))
+    dp.add_handler(CommandHandler("check_status", auto_update_command))
+    dp.add_handler(MessageHandler(Filters.regex("^Check Status$"), auto_update_command))
     dp.add_handler(CommandHandler("announce", announce_start))
     dp.add_handler(CommandHandler("set_delay", set_delay_start))
     dp.add_handler(MessageHandler(Filters.regex("^Set Delay$"), set_delay_start))
