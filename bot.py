@@ -439,6 +439,21 @@ def start_command(update, context):
     chat_id = update.effective_user.id
     update.effective_message.reply_text("👋 Welcome to the Cortensor Node Monitoring Bot!\nSelect an option from the menu below:", reply_markup=main_menu_keyboard(chat_id))
 
+def menu_enable_alerts(update, context):
+    chat_id = update.effective_chat.id
+    if not get_addresses_for_chat(chat_id):
+        update.effective_message.reply_text("No addresses registered! Please add one using 'Add Address'.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    current_jobs = context.job_queue.get_jobs_by_name(f"alert_{chat_id}")
+    if current_jobs:
+        update.effective_message.reply_text("Alerts are already active.", reply_markup=main_menu_keyboard(update.effective_user.id))
+        return
+    context.job_queue.run_repeating(alert_check, interval=900, context={'chat_id': chat_id}, name=f"alert_{chat_id}")
+    update.effective_message.reply_text(
+        "✅ Alerts enabled.\n\nThe bot will monitor your node and send alerts if no transactions occur for 15 minutes or if a node stall is detected.",
+        reply_markup=main_menu_keyboard(update.effective_user.id)
+    )
+
 def error_handler(update, context):
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
     error_text = f"⚠️ An error occurred: {context.error}"
