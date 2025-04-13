@@ -27,21 +27,24 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# -------------------- CONFIGURATION --------------------
 TOKEN = os.getenv("TOKEN")
 API_KEY = os.getenv("API_KEY")
 DEFAULT_UPDATE_INTERVAL = 300  # Default auto update interval (5 minutes)
 CORTENSOR_API = os.getenv("CORTENSOR_API", "https://dashboard-devnet3.cortensor.network")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
-MIN_AUTO_UPDATE_INTERVAL = 60  # Minimum auto update interval in seconds
+MIN_AUTO_UPDATE_INTERVAL = 60  # Minimum auto update interval (in seconds)
 
+# -------------------- INITIALIZATION --------------------
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 WIB = timezone(timedelta(hours=7))
 
+# -------------------- CONVERSATION STATES --------------------
 ADD_ADDRESS, REMOVE_ADDRESS, ANNOUNCE, SET_DELAY = range(1, 5)
-custom_delays = {}
 
+# -------------------- DATA STORAGE FUNCTIONS --------------------
 def load_data() -> dict:
     if os.path.exists(DATA_FILE):
         try:
@@ -83,6 +86,7 @@ def update_auto_update_interval(chat_id: int, interval: float):
     chat_data["auto_update_interval"] = interval
     update_chat_data(chat_id, chat_data)
 
+# -------------------- UTILITY FUNCTIONS --------------------
 def parse_address_item(item):
     if isinstance(item, dict):
         return item.get("address"), item.get("label", "")
@@ -116,9 +120,10 @@ def main_menu_keyboard(user_id: int) -> ReplyKeyboardMarkup:
         keyboard.append(["Announce"])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
+# -------------------- API FUNCTIONS --------------------
 def get_dynamic_delay(num_addresses: int) -> float:
     base_delay = 2.0
-    total_calls = 2 * num_addresses
+    total_calls = 2 * num_addresses  # Two API calls per address
     if total_calls <= 0.5:
         return base_delay
     required_total_time = total_calls / 0.5
@@ -154,7 +159,15 @@ def safe_fetch_transactions(address: str, delay: float) -> list:
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            params = {"module": "account", "action": "txlist", "address": address, "sort": "desc", "page": 1, "offset": 100, "apikey": API_KEY}
+            params = {
+                "module": "account",
+                "action": "txlist",
+                "address": address,
+                "sort": "desc",
+                "page": 1,
+                "offset": 100,
+                "apikey": API_KEY
+            }
             response = requests.get("https://api-sepolia.arbiscan.io/api", params=params, timeout=10)
             json_resp = response.json()
             result = json_resp.get("result", [])
@@ -182,9 +195,9 @@ def fetch_node_stats(address: str) -> dict:
         logger.error(f"Node stats error for {address}: {e}")
         return {}
 
-# New helper: scan through txs (not limited to last 25) and return the label and timestamp
-# for the most recent successful transaction matching one of the allowed methods.
+# -------------------- STALL DURATION HELPER --------------------
 def get_last_allowed_transaction(txs: list):
+    # Allowed methods (with mapping to their labels)
     allowed = {
         "0xf21a494b": "Commit",
         "0x65c815a5": "Precommit",
@@ -192,9 +205,10 @@ def get_last_allowed_transaction(txs: list):
     }
     for tx in txs:
         method = tx.get('input', '').lower()
-        # Skip if this is a Ping transaction
+        # Skip Ping transactions
         if method.startswith("0x5c36b186"):
             continue
+        # Only consider successful transactions
         if tx.get("isError") != "0":
             continue
         for key, label in allowed.items():
@@ -204,7 +218,7 @@ def get_last_allowed_transaction(txs: list):
             return ("Create", int(tx['timeStamp']))
     return None
 
-# Auto Update job sends combined update messages.
+# -------------------- JOB FUNCTIONS --------------------
 def auto_update(context: CallbackContext):
     chat_id = context.job.context['chat_id']
     addresses = get_addresses_for_chat(chat_id)[:25]
@@ -222,7 +236,7 @@ def auto_update(context: CallbackContext):
             time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
             status = "🟢 Online" if time_diff <= timedelta(minutes=5) else "🔴 Offline"
             last_activity = get_age(last_tx_time)
-            # Use allowed tx check for stall duration irrespective of 25-last tx group.
+            # For stall duration check, scan through all transactions to find the last allowed one.
             last_allowed = get_last_allowed_transaction(txs)
             if last_allowed:
                 method_label, ts = last_allowed
@@ -231,7 +245,7 @@ def auto_update(context: CallbackContext):
             else:
                 stall_status = "✅ Normal"
                 stall_extra = ""
-            # Use similar grouping for health (if desired)
+            # Health grouping using last 25 transactions.
             latest_25 = txs[:25]
             groups = [latest_25[i*5:(i+1)*5] for i in range(5)]
             health_list = [("🟩" if all(tx.get('isError') == '0' for tx in group) else "🟥") if group else "⬜" for group in groups]
@@ -253,7 +267,6 @@ def auto_update(context: CallbackContext):
     final_output = "*Auto Update*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
     context.bot.send_message(chat_id=chat_id, text=final_output, parse_mode="Markdown")
 
-# Alert Check job sends an alert if no transactions occur for 15 minutes or stall condition exists.
 def alert_check(context: CallbackContext):
     chat_id = context.job.context['chat_id']
     addresses = get_addresses_for_chat(chat_id)[:25]
@@ -263,24 +276,18 @@ def alert_check(context: CallbackContext):
         if txs:
             last_tx_time = int(txs[0]['timeStamp'])
             time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
+            # Alert if no transactions in 15 minutes
             if time_diff > timedelta(minutes=15):
-                msg_lines = [f"🚨 *Alert for {shorten_address(wallet)}" + (f" ({label})" if label else "") + "*:"]
-                msg_lines.append("⏱️ No transactions in the last 15 minutes.")
-                context.bot.send_message(chat_id=chat_id, text="\n".join(msg_lines), parse_mode="Markdown")
+                msg = f"🚨 *Alert for {shorten_address(wallet)}" + (f" ({label})" if label else "") + "*:\n⏱️ No transactions in the last 15 minutes."
+                context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
                 continue
-            # Check stall condition regardless of 25-last tx grouping:
+            # Also check stall condition using the last allowed transaction
             last_allowed = get_last_allowed_transaction(txs)
-            if last_allowed is None:
-                msg_lines = [f"🚨 *Alert for {shorten_address(wallet)}" + (f" ({label})" if label else "") + "*:"]
-                msg_lines.append("⚠️ Node stall detected (no successful allowed transactions found).")
-                context.bot.send_message(chat_id=chat_id, text="\n".join(msg_lines), parse_mode="Markdown")
-            else:
+            if last_allowed:
                 method_label, ts = last_allowed
-                # Define a stall condition – here you may choose to alert only if the last allowed tx is older than 15 minutes.
                 if datetime.now(WIB) - datetime.fromtimestamp(ts, WIB) > timedelta(minutes=15):
-                    msg_lines = [f"🚨 *Alert for {shorten_address(wallet)}" + (f" ({label})" if label else "") + "*:"]
-                    msg_lines.append(f"⚠️ Node stall detected (last successful {method_label} transaction was {get_age(ts)}).")
-                    context.bot.send_message(chat_id=chat_id, text="\n".join(msg_lines), parse_mode="Markdown")
+                    msg = f"🚨 *Alert for {shorten_address(wallet)}" + (f" ({label})" if label else "") + "*:\n⚠️ Node stall detected (last successful {method_label} transaction was {get_age(ts)})."
+                    context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
         else:
             context.bot.send_message(
                 chat_id=chat_id,
@@ -288,7 +295,7 @@ def alert_check(context: CallbackContext):
                 parse_mode="Markdown"
             )
 
-# Set Delay command to adjust the auto update interval.
+# -------------------- COMMAND HANDLER FUNCTIONS --------------------
 def set_delay_start(update, context):
     update.effective_message.reply_text(
         "Please enter the custom auto update interval (in seconds). (Minimum is 60 seconds)\n(Send /cancel to abort)",
