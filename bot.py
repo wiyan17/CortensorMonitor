@@ -7,7 +7,6 @@ Features:
 • Remove Address
 • Check Status
 • Auto Update (default tiap 5 menit)
-• Enable Alerts
 • Set Delay (custom auto update interval per chat)
 • Stop
 • Announce (admin only)
@@ -30,7 +29,7 @@ load_dotenv()
 # -------------------- KONFIGURASI --------------------
 TOKEN = os.getenv("TOKEN")
 API_KEY = os.getenv("API_KEY")
-DEFAULT_UPDATE_INTERVAL = 300  # Interval auto update default = 300 detik (5 menit)
+DEFAULT_UPDATE_INTERVAL = 300  # Default auto update interval = 300 detik (5 menit)
 CORTENSOR_API = os.getenv("CORTENSOR_API", "https://dashboard-devnet3.cortensor.network")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATA_FILE = "data.json"
@@ -113,10 +112,9 @@ def main_menu_keyboard(chat_id: int) -> ReplyKeyboardMarkup:
     keyboard = [
         ["Add Address", "Remove Address"],
         ["Check Status", "Auto Update"],
-        ["Enable Alerts", "Set Delay"],
+        ["Set Delay"],
         ["Stop"]
     ]
-    # Jika ID chat juga merupakan admin (misalnya user privat) maka tampilkan menu announce
     if chat_id in ADMIN_IDS:
         keyboard.append(["Announce"])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -273,41 +271,23 @@ def auto_update_logic(chat_id: int, bot) -> None:
     final_output = "*Auto Update*\n\n" + "\n\n".join(output_lines) + f"\n\n_Last update: {format_time(get_wib_time())}_"
     bot.send_message(chat_id=chat_id, text=final_output, parse_mode="Markdown")
 
+# Callback untuk job auto update (hanya menerima context)
+def auto_update_job(context: CallbackContext):
+    chat_id = context.job.context['chat_id']
+    auto_update_logic(chat_id, context.bot)
+
 # Wrapper untuk command auto update
 def auto_update_command(update, context):
     chat_id = update.effective_chat.id
-    auto_update_logic(chat_id, context.bot)
-
-# -------------------- LOGIKA ALERT --------------------
-def alert_check_logic(chat_id: int, bot) -> None:
-    addresses = get_addresses_for_chat(chat_id)[:25]
-    for item in addresses:
-        wallet, label = parse_address_item(item)
-        txs = safe_fetch_transactions(wallet, delay=2.0)
-        if txs:
-            last_tx_time = int(txs[0]['timeStamp'])
-            time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
-            if time_diff > timedelta(minutes=15):
-                msg = f"🚨 *Alert for {shorten_address(wallet)}" + (f" ({label})" if label else "") + "*:\n⏱️ No transactions in the last 15 minutes."
-                bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
-                continue
-            last_allowed = get_last_allowed_transaction(txs)
-            if last_allowed:
-                method_label, ts = last_allowed
-                if datetime.now(WIB) - datetime.fromtimestamp(ts, WIB) > timedelta(minutes=15):
-                    msg = f"🚨 *Alert for {shorten_address(wallet)}" + (f" ({label})" if label else "") + "*:\n⚠️ Node stall detected (last successful {method_label} transaction was {get_age(ts)})."
-                    bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
-        else:
-            bot.send_message(
-                chat_id=chat_id,
-                text=f"🚨 *Alert for {shorten_address(wallet)}" + (f" ({label})" if label else "") + "*:\n- No transactions found!\n[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{wallet}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{wallet})",
-                parse_mode="Markdown"
-            )
-
-# Wrapper untuk command enable alerts
-def alert_check_command(update, context):
-    chat_id = update.effective_chat.id
-    alert_check_logic(chat_id, context.bot)
+    interval = get_auto_update_interval(chat_id)
+    # Hapus job auto update yang sudah ada di chat ini
+    for job in context.job_queue.get_jobs_by_name(f"auto_update_{chat_id}"):
+        job.schedule_removal()
+    context.job_queue.run_repeating(auto_update_job, interval=interval, first=0, context={'chat_id': chat_id}, name=f"auto_update_{chat_id}")
+    update.effective_message.reply_text(
+        f"✅ Auto update started. (Interval: {interval} seconds)\nThe bot will send node updates automatically.",
+        reply_markup=main_menu_keyboard(chat_id)
+    )
 
 # -------------------- HANDLER COMMAND --------------------
 def set_delay_start(update, context):
@@ -450,15 +430,13 @@ def main():
     dp.add_handler(CommandHandler("start", start_command))
     dp.add_handler(CommandHandler("auto_update", auto_update_command))
     dp.add_handler(MessageHandler(Filters.regex("^Auto Update$"), auto_update_command))
-    dp.add_handler(CommandHandler("enable_alerts", alert_check_command))
-    dp.add_handler(MessageHandler(Filters.regex("^Enable Alerts$"), alert_check_command))
-    dp.add_handler(CommandHandler("stop", lambda update, context: update.effective_message.reply_text("Bot stopped.", reply_markup=ReplyKeyboardRemove())))
-    dp.add_handler(MessageHandler(Filters.regex("^Stop$"), lambda update, context: update.effective_message.reply_text("Bot stopped.", reply_markup=ReplyKeyboardRemove())))
     dp.add_handler(CommandHandler("check_status", auto_update_command))
     dp.add_handler(MessageHandler(Filters.regex("^Check Status$"), auto_update_command))
     dp.add_handler(CommandHandler("announce", announce_start))
     dp.add_handler(CommandHandler("set_delay", set_delay_start))
     dp.add_handler(MessageHandler(Filters.regex("^Set Delay$"), set_delay_start))
+    dp.add_handler(CommandHandler("stop", lambda update, context: update.effective_message.reply_text("Bot stopped.", reply_markup=ReplyKeyboardRemove())))
+    dp.add_handler(MessageHandler(Filters.regex("^Stop$"), lambda update, context: update.effective_message.reply_text("Bot stopped.", reply_markup=ReplyKeyboardRemove())))
     dp.add_error_handler(error_handler)
 
     conv_add = ConversationHandler(
