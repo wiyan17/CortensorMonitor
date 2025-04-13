@@ -451,6 +451,42 @@ def main():
     dp.add_handler(MessageHandler(Filters.regex("^Set Delay$"), set_delay_start))
     dp.add_error_handler(error_handler)
 
+def menu_check_status(update, context):
+    chat_id = update.effective_chat.id
+    addresses = get_addresses_for_chat(chat_id)[:25]
+    if not addresses:
+        update.effective_message.reply_text(
+            "No addresses registered! Please add one using 'Add Address'.",
+            reply_markup=main_menu_keyboard(update.effective_user.id)
+        )
+        return
+
+    output_lines = []
+    for item in addresses:
+        wallet, label = parse_address_item(item)
+        addr_display = f"🔑 {shorten_address(wallet)}" + (f" ({label})" if label else "")
+        balance = safe_fetch_balance(wallet, delay=2.0)
+        txs = safe_fetch_transactions(wallet, delay=2.0)
+
+        if txs:
+            last_tx_time = int(txs[0]['timeStamp'])
+            time_diff = datetime.now(WIB) - datetime.fromtimestamp(last_tx_time, WIB)
+            status = "🟢 Online" if time_diff <= timedelta(minutes=5) else "🔴 Offline"
+            last_activity = get_age(last_tx_time)
+        else:
+            status = "🔴 Offline"
+            last_activity = "N/A"
+
+        output_lines.append(
+            f"*{addr_display}*\n"
+            f"💰 Balance: `{balance:.4f} ETH` | Status: {status}\n"
+            f"⏱️ Last Activity: `{last_activity}`\n"
+            f"[🔗 Arbiscan](https://sepolia.arbiscan.io/address/{wallet}) | [📈 Dashboard]({CORTENSOR_API}/stats/node/{wallet})"
+        )
+
+    final_output = "*Node Status*\n\n" + "\n\n".join(output_lines)
+    update.effective_message.reply_text(final_output, parse_mode="Markdown")
+
     conv_add = ConversationHandler(
         entry_points=[MessageHandler(Filters.regex("^Add Address$"), add_address_start)],
         states={ADD_ADDRESS: [MessageHandler(Filters.text & ~Filters.command, add_address_receive)]},
